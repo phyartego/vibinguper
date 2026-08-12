@@ -14,6 +14,7 @@ import type {
   ThemeApi,
   WindowApi
 } from '../shared/ipc-contract'
+import type { BleFloatApi } from '../shared/ble-float'
 import type { VibingDebugShellApi } from './app/AppShell'
 import type { WorkspaceReaderApi } from '../shared/workspace-reader'
 
@@ -33,6 +34,7 @@ declare global {
     workspaceReader: WorkspaceReaderApi
     appApi: AppApi
     appThemeApi: AppThemeApi
+    bleFloatApi: BleFloatApi
     __VIBING_E2E__?: true
     __vibingDebugShell?: VibingDebugShellApi
   }

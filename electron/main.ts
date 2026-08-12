@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, session } from 'electron'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { createWindow } from './window'
@@ -23,10 +23,13 @@ import {
 } from './tray'
 import { startThemeWatcher, stopThemeWatcher } from './themes-watch'
 import { AppEventChannel } from '../shared/ipc-contract'
+import { AgentEventChannel } from '../shared/agent-events'
 import {
   ElectronFloatingWindowController,
   type FloatingWindowController
 } from './floating/FloatingWindowController'
+import { SessionBleBroadcaster } from './ble/SessionBleBroadcaster'
+import { IpcBleTransport } from './ble/IpcBleTransport'
 import { AiCliDiscoveryService } from './ai-cli-discovery'
 import { AgentSessionRuntime } from './agents/AgentSessionRuntime'
 import { ObserverRegistry } from './agents/ObserverRegistry'
@@ -90,11 +93,17 @@ const agentRuntime = new AgentSessionRuntime({
           win.webContents.send(channel, payload)
         }
       }
+      // projection 权威在 main；BLE 推送订阅同一广播流，复用 listActive() 取快照。
+      if (channel === AgentEventChannel.Projection) {
+        bleBroadcaster?.notifyProjectionChanged()
+      }
     }
   }
 })
 let shutdownStarted = false
 let floatingController: FloatingWindowController | null = null
+let bleTransport: IpcBleTransport | null = null
+let bleBroadcaster: SessionBleBroadcaster | null = null
 let winRef: BrowserWindow | null = null
 
 const showWindow = (): void => {
@@ -122,6 +131,14 @@ if (isPrimaryInstance) app.whenReady().then(async () => {
 
   const prefs = await loadMainPrefs()
   await eventLog.init()
+
+  // Web Bluetooth（renderer navigator.bluetooth）的 requestDevice 会在主进程权限网关
+  // 以 'bluetooth' 询问；本应用此前无权限处理器，仅授予 bluetooth，其余维持默认拒绝。
+  session.defaultSession.setPermissionRequestHandler(
+    (_wc, permission, callback) => {
+      callback((permission as string) === 'bluetooth')
+    }
+  )
 
   let trayRef: Tray | null = null
 
@@ -164,6 +181,17 @@ if (isPrimaryInstance) app.whenReady().then(async () => {
         .listActive()
         .find((projection) => projection.sessionId === sessionId)
   })
+  // BLE 悬浮窗推送：projection 权威在 main，Web Bluetooth central 运行在主窗口 renderer。
+  bleTransport = new IpcBleTransport({
+    getMainWindow: () => (winRef && !winRef.isDestroyed() ? winRef : null)
+  })
+  bleBroadcaster = new SessionBleBroadcaster({
+    listActive: () => agentRuntime.listActive(),
+    transport: bleTransport,
+    focusSession: (sessionId) =>
+      floatingController?.focusSession(sessionId) ?? false
+  })
+  bleTransport.wire(bleBroadcaster)
   await floatingController.setEnabled(prefs.floatingWindowEnabled)
   trayRef = createTray(prefs.language, trayCallbacks)
   if (prefs.globalShortcutEnabled) {
@@ -216,6 +244,8 @@ if (isPrimaryInstance) app.on('before-quit', (event) => {
     // Agent Runtime 先写入退出事实并回收 observer；随后兜底关闭普通终端。
     await agentRuntime.disposeAll()
     await hookIngress.dispose()
+    bleBroadcaster?.dispose()
+    bleTransport?.dispose()
     floatingController?.dispose()
     workspaceReader.clear()
     manager.killAll()

@@ -13,6 +13,7 @@ import NewSessionFlow from './NewSessionFlow'
 import CloseSessionDialog from './CloseSessionDialog'
 import TargetCursor from './effects/TargetCursor'
 import SidebarTint from './SidebarTint'
+import BleFloatConnectButton from '../ble/BleFloatConnectButton'
 import {
   isPageId,
   terminalIdFromPage,
@@ -798,6 +799,9 @@ export default function AppShell() {
           />
         )}
       </AnimatePresence>
+
+      {/* BLE 悬浮窗：Web Bluetooth central 由该按钮的用户手势驱动连接 */}
+      <BleFloatConnectButton />
     </div>
   )
 }

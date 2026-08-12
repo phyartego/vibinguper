@@ -58,6 +58,12 @@ import {
   type WorkspaceChange,
   type WorkspaceReaderApi
 } from '../shared/workspace-reader'
+import {
+  BleFloatEventChannel,
+  BleFloatInvokeChannel,
+  type BleFloatApi,
+  type BleFloatConnectionState
+} from '../shared/ble-float'
 
 /** 推算 Windows build 号（os.release() 形如 "10.0.26200"）。 */
 function windowsBuildNumber(): number {
@@ -355,6 +361,30 @@ const appThemeApi: AppThemeApi = {
   }
 }
 
+const bleFloatApi: BleFloatApi = {
+  reportState: (state: BleFloatConnectionState) =>
+    ipcRenderer.invoke(BleFloatInvokeChannel.ReportState, state),
+  reportFocus: (focusId) =>
+    ipcRenderer.invoke(BleFloatInvokeChannel.ReportFocus, { focus: focusId }),
+  onWrite: (cb) => {
+    const handler = (_event: IpcRendererEvent, packet: Uint8Array): void => {
+      if (packet instanceof Uint8Array) cb(packet)
+    }
+    ipcRenderer.on(BleFloatEventChannel.WriteSessionData, handler)
+    return () =>
+      ipcRenderer.removeListener(
+        BleFloatEventChannel.WriteSessionData,
+        handler
+      )
+  },
+  onDisconnect: (cb) => {
+    const handler = (_event: IpcRendererEvent): void => cb()
+    ipcRenderer.on(BleFloatEventChannel.Disconnect, handler)
+    return () =>
+      ipcRenderer.removeListener(BleFloatEventChannel.Disconnect, handler)
+  }
+}
+
 try {
   contextBridge.exposeInMainWorld('ptyApi', ptyApi)
   contextBridge.exposeInMainWorld('clipboardApi', clipboardApi)
@@ -369,6 +399,7 @@ try {
   contextBridge.exposeInMainWorld('workspaceReader', workspaceReader)
   contextBridge.exposeInMainWorld('appApi', appApi)
   contextBridge.exposeInMainWorld('appThemeApi', appThemeApi)
+  contextBridge.exposeInMainWorld('bleFloatApi', bleFloatApi)
   // E2E：主进程设置 VIBING_E2E 时，向渲染进程注入标记，激活 debugBridge（即便是生产构建）
   if (process.env['VIBING_E2E']) {
     contextBridge.exposeInMainWorld('__VIBING_E2E__', true)
