@@ -123,6 +123,7 @@ export interface BleSessionItemWire {
 /** §3.1 上位机→设备完整快照。 */
 export interface BleSessionDataWire {
   seq: number
+  now: number
   focus: string
   items: BleSessionItemWire[]
 }

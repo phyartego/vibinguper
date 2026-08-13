@@ -124,5 +124,5 @@ export function buildSessionData(
     }
   }
 
-  return { seq: seq & 0xffff, focus, items }
+  return { seq: seq & 0xffff, now: Math.floor(Date.now() / 1000), focus, items }
 }
