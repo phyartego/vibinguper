@@ -58,10 +58,25 @@ export class WebBluetoothBleCentral {
    * 经 onStateChange 回调通知持有者，避免 UI 指示灯与真实连接不同步。
    */
   async connect(): Promise<void> {
+    console.log('[ble-float] connect() called, supported =', this.supported)
     if (!this.supported) {
       this.onStateChange({ status: 'unsupported' })
       await this.safeReport({ connected: false, error: 'unsupported' })
       return
+    }
+    // Web Bluetooth 不会自动开启系统蓝牙：adapter 关闭时 requestDevice 会静默 reject，
+    // 这里先用 getAvailability 探测，给出明确的“请先开蓝牙”提示。
+    try {
+      const available = await navigator.bluetooth.getAvailability()
+      console.log('[ble-float] bluetooth availability =', available)
+      if (!available) {
+        const msg = '蓝牙未开启，请先打开电脑蓝牙'
+        this.onStateChange({ status: 'error', message: msg })
+        await this.safeReport({ connected: false, error: msg })
+        return
+      }
+    } catch (e) {
+      console.log('[ble-float] getAvailability threw:', describeError(e))
     }
     if (this.device) {
       this.onStateChange({ status: 'connected' })
@@ -75,14 +90,19 @@ export class WebBluetoothBleCentral {
         optionalServices: [BLE_FLOAT_SERVICE_UUID]
       })
     } catch (error) {
-      // 用户取消选择器会抛 NotFoundError；不当作错误噪声，回到 idle。
       const message = describeError(error)
-      if (/not found|cancelled|canceled|chooser/i.test(message)) {
+      console.log('[ble-float] requestDevice rejected:', message)
+      // 用户主动取消：静默回 idle
+      if (/cancelled|canceled/i.test(message)) {
         this.onStateChange({ status: 'idle' })
         return
       }
-      this.onStateChange({ status: 'error', message })
-      await this.safeReport({ connected: false, error: message })
+      // 未找到设备 / 扫描超时 / 蓝牙不可用：给明确原因，不再静默回 idle
+      const userMsg = /not found|chooser|timed ?out|not available|no adapter|search/i.test(message)
+        ? '未找到 Vibing-Float（ESP32 是否已插上并烧录固件？）'
+        : message
+      this.onStateChange({ status: 'error', message: userMsg })
+      await this.safeReport({ connected: false, error: userMsg })
       return
     }
 

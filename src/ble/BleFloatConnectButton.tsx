@@ -19,10 +19,9 @@ const STATUS_COLOR: Record<string, string> = {
 
 const STATUS_LABEL: Record<string, string> = {
   idle: '连接 Vibing-Float',
-  connecting: '连接中…',
+  connecting: '搜索 Vibing-Float…',
   connected: 'Vibing-Float 已连接',
   disconnected: '已断开 · 重连',
-  error: '连接失败 · 重试',
   unsupported: 'Web Bluetooth 不可用'
 }
 
@@ -60,7 +59,9 @@ export default function BleFloatConnectButton() {
                   : 'bg-text-faint'
           }`}
         />
-        {STATUS_LABEL[state.status]}
+        <span className="truncate max-w-[200px]">
+          {state.status === 'error' ? (state.message ?? '连接失败 · 重试') : STATUS_LABEL[state.status]}
+        </span>
       </span>
     </button>
   )

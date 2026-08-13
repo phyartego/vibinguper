@@ -30,6 +30,7 @@ import {
 } from './floating/FloatingWindowController'
 import { SessionBleBroadcaster } from './ble/SessionBleBroadcaster'
 import { IpcBleTransport } from './ble/IpcBleTransport'
+import { BLE_FLOAT_DEVICE_NAME } from '../shared/ble-float'
 import { AiCliDiscoveryService } from './ai-cli-discovery'
 import { AgentSessionRuntime } from './agents/AgentSessionRuntime'
 import { ObserverRegistry } from './agents/ObserverRegistry'
@@ -182,6 +183,27 @@ if (isPrimaryInstance) app.whenReady().then(async () => {
         .find((projection) => projection.sessionId === sessionId)
   })
   // BLE 悬浮窗推送：projection 权威在 main，Web Bluetooth central 运行在主窗口 renderer。
+  // Web Bluetooth 的 requestDevice 在 Electron 里不会弹系统选择器，必须在主进程
+  // webContents 的 select-bluetooth-device 事件中应答：自动选中广播名为 Vibing-Float
+  // 的设备；扫描期间该事件持续触发——命中即选，超过 20s 未发现则取消（renderer 收到
+  // NotFoundError 回到 idle，避免 requestDevice 永久挂起）。
+  let bleSelectDeadline = 0
+  const bleWindow = winRef && !winRef.isDestroyed() ? winRef : null
+  bleWindow?.webContents.on('select-bluetooth-device', (event, deviceList, cb) => {
+    console.log('[ble-float] select-bluetooth-device fired, devices =', deviceList.length, deviceList.map((d) => d.deviceName).join(',') || '(none)')
+    event.preventDefault()
+    if (bleSelectDeadline === 0) bleSelectDeadline = Date.now() + 20000
+    const hit = deviceList.find((d) => d.deviceName === BLE_FLOAT_DEVICE_NAME)
+    if (hit) {
+      bleSelectDeadline = 0
+      cb(hit.deviceId)
+      return
+    }
+    if (Date.now() > bleSelectDeadline) {
+      bleSelectDeadline = 0
+      cb('')
+    }
+  })
   bleTransport = new IpcBleTransport({
     getMainWindow: () => (winRef && !winRef.isDestroyed() ? winRef : null)
   })
