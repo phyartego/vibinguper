@@ -42,6 +42,7 @@ import { PiObserverAdapter } from './agents/adapters/pi'
 import { HookIngress } from './hooks/HookIngress'
 import { WorkspaceReader } from './workspace/WorkspaceReader'
 import { WorkspaceReaderEventChannel } from '../shared/workspace-reader'
+import { DisplayPreviewBridge } from './preview/DisplayPreviewBridge'
 
 // E2E/开发：隔离 userData，保证 stats/主题等持久化断言从干净状态出发。
 // 必须在 app ready 之前调用。
@@ -105,6 +106,7 @@ let shutdownStarted = false
 let floatingController: FloatingWindowController | null = null
 let bleTransport: IpcBleTransport | null = null
 let bleBroadcaster: SessionBleBroadcaster | null = null
+let displayPreviewBridge: DisplayPreviewBridge | null = null
 let winRef: BrowserWindow | null = null
 
 const showWindow = (): void => {
@@ -182,6 +184,18 @@ if (isPrimaryInstance) app.whenReady().then(async () => {
         .listActive()
         .find((projection) => projection.sessionId === sessionId)
   })
+  displayPreviewBridge = new DisplayPreviewBridge({
+    listActive: () => agentRuntime.listActive(),
+    focusSession: (sessionId) =>
+      floatingController?.focusSession(sessionId) ?? false
+  })
+  try {
+    await displayPreviewBridge.start()
+  } catch (error) {
+    console.warn('[display-preview] bridge unavailable:', error)
+    displayPreviewBridge.dispose()
+    displayPreviewBridge = null
+  }
   // BLE 悬浮窗推送：projection 权威在 main，Web Bluetooth central 运行在主窗口 renderer。
   // Web Bluetooth 的 requestDevice 在 Electron 里不会弹系统选择器，必须在主进程
   // webContents 的 select-bluetooth-device 事件中应答：自动选中广播名为 Vibing-Float
@@ -268,6 +282,7 @@ if (isPrimaryInstance) app.on('before-quit', (event) => {
     await hookIngress.dispose()
     bleBroadcaster?.dispose()
     bleTransport?.dispose()
+    displayPreviewBridge?.dispose()
     floatingController?.dispose()
     workspaceReader.clear()
     manager.killAll()

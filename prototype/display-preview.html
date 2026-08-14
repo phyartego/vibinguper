@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vibing 下位机实时悬浮窗</title>
+  <style>
+    @font-face { font-family: Ammonite; src: url('./public/Ammonite-2.otf') format('opentype'); font-display: swap; }
+    * { box-sizing: border-box; }
+    :root { color: #242424; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; background: #ececec; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; }
+    .stage { width: min(100%, 928px); }
+    .device-label { display: flex; align-items: center; justify-content: space-between; margin: 0 4px 10px; color: #777; font-size: 12px; letter-spacing: .04em; }
+    .connection { display: inline-flex; align-items: center; gap: 6px; letter-spacing: 0; }
+    .connection::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #b9b9b9; }
+    .connection.online::before { background: #37ad6b; box-shadow: 0 0 0 3px rgb(55 173 107 / 13%); }
+    .connection.offline::before { background: #d75e5e; }
+    .screen { width: 100%; aspect-ratio: 928 / 262; overflow: hidden; position: relative; touch-action: pan-y; user-select: none; cursor: pointer; background: #fff; border: 1px solid #bbb; border-radius: 22px; box-shadow: 0 18px 45px rgb(0 0 0 / 18%); }
+    .status-card { position: absolute; inset: 0; padding: clamp(16px, 2.8vw, 26px) clamp(20px, 3.2vw, 30px); background: #fff; transition: transform 180ms ease, opacity 180ms ease; }
+    .status-card.slide-left { transform: translateX(-8%); opacity: .25; }
+    .status-card.slide-right { transform: translateX(8%); opacity: .25; }
+    .card-head { height: 34px; display: flex; align-items: flex-start; }
+    .brand { flex: 0 0 auto; font-family: Ammonite, Impact, sans-serif; font-size: 25px; line-height: 25px; color: #4b4b4b; transform: skew(-8deg); }
+    .dots { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 8px 0 0 11px; }
+    .dot { width: 10px; height: 10px; flex: 0 0 auto; border: 0; padding: 0; border-radius: 999px; background: #b9b9b9; transition: transform 160ms ease, box-shadow 160ms ease; }
+    .dot.working { background: #4c8df6; }
+    .dot.needs-you { background: #e1aa20; }
+    .dot.done { background: #37ad6b; }
+    .dot.error { background: #d75e5e; }
+    .dot.idle { background: #b9b9b9; }
+    .dot.selected { transform: scale(1.35); box-shadow: 0 0 0 3px rgb(0 0 0 / 8%); }
+    .session { margin: 48px 2px 0; min-width: 0; }
+    .session-name { margin: 0 0 7px; overflow: hidden; color: #555; font-size: clamp(17px, 2.5vw, 24px); line-height: 1.2; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+    .message { margin: 0; overflow: hidden; color: #999; font-size: clamp(13px, 1.7vw, 16px); line-height: 22px; white-space: nowrap; text-overflow: ellipsis; }
+    .meta { position: absolute; right: 30px; bottom: 24px; color: #b0b0b0; font-size: 12px; }
+    .gesture-hint { margin: 12px 4px 0; color: #888; font-size: 12px; text-align: center; }
+    .toast { position: fixed; left: 50%; bottom: 28px; z-index: 10; padding: 8px 13px; transform: translate(-50%, 12px); border-radius: 999px; background: rgb(35 35 35 / 88%); color: #fff; font-size: 12px; opacity: 0; pointer-events: none; transition: 180ms ease; }
+    .toast.show { transform: translate(-50%, 0); opacity: 1; }
+    @media (max-width: 600px) { body { padding: 12px; } .screen { border-radius: 14px; } .session { margin-top: 26px; } .meta { right: 20px; bottom: 14px; } }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <div class="device-label">
+      <span>下位机当前横屏画布 · 928 × 262</span>
+      <span id="connection" class="connection">正在连接上位机</span>
+    </div>
+    <section id="screen" class="screen" aria-label="上位机悬浮窗镜像，左右滑动切换，点击聚焦">
+      <article id="card" class="status-card">
+        <div class="card-head">
+          <span class="brand">vibing</span>
+          <span id="dots" class="dots" aria-label="上位机卡片状态"></span>
+        </div>
+        <div class="session">
+          <h1 id="sessionName" class="session-name">暂无活跃会话</h1>
+          <p id="message" class="message">等待上位机创建卡片</p>
+        </div>
+        <span id="meta" class="meta"></span>
+      </article>
+    </section>
+    <p class="gesture-hint">左滑：上一张卡片　·　右滑：下一张卡片　·　点击：让上位机聚焦当前卡片</p>
+  </main>
+  <div id="toast" class="toast" role="status"></div>
+
+  <script>
+    const API = 'http://127.0.0.1:4175/api';
+    const POLL_MS = 700;
+    const SWIPE_THRESHOLD = 54;
+    const screen = document.querySelector('#screen');
+    const card = document.querySelector('#card');
+    const dots = document.querySelector('#dots');
+    const sessionName = document.querySelector('#sessionName');
+    const message = document.querySelector('#message');
+    const meta = document.querySelector('#meta');
+    const connection = document.querySelector('#connection');
+    const toast = document.querySelector('#toast');
+    let sessions = [];
+    let selectedId = '';
+    let pointerStart = null;
+    let suppressClick = false;
+    let requestRunning = false;
+    let toastTimer = 0;
+
+    const statusText = { working: '工作中', 'needs-you': '等待用户', done: '已完成', error: '出错', idle: '空闲' };
+
+    function selectedIndex() {
+      const index = sessions.findIndex((item) => item.id === selectedId);
+      return index >= 0 ? index : 0;
+    }
+
+    function currentSession() { return sessions[selectedIndex()] ?? null; }
+
+    function showToast(text) {
+      toast.textContent = text;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1500);
+    }
+
+    function render() {
+      const current = currentSession();
+      dots.replaceChildren(...sessions.map((session, index) => {
+        const dot = document.createElement('button');
+        dot.type = 'button';
+        dot.className = 'dot ' + session.status + (session.id === current?.id ? ' selected' : '');
+        dot.title = (index + 1) + '. ' + session.name + ' · ' + (statusText[session.status] ?? session.status);
+        dot.addEventListener('click', (event) => {
+          event.stopPropagation();
+          selectedId = session.id;
+          render();
+        });
+        return dot;
+      }));
+      if (!current) {
+        sessionName.textContent = '暂无活跃会话';
+        message.textContent = '等待上位机创建卡片';
+        meta.textContent = '';
+        return;
+      }
+      sessionName.textContent = current.name || current.adapterId || '会话';
+      message.textContent = current.detail || statusText[current.status] || current.status;
+      const index = selectedIndex();
+      meta.textContent = (index + 1) + ' / ' + sessions.length + '　' + (statusText[current.status] ?? current.status);
+    }
+
+    async function refreshSessions() {
+      if (requestRunning) return;
+      requestRunning = true;
+      try {
+        const response = await fetch(API + '/sessions', { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const payload = await response.json();
+        const next = Array.isArray(payload.sessions) ? payload.sessions : [];
+        const oldSelected = selectedId;
+        sessions = next;
+        if (!sessions.some((item) => item.id === oldSelected)) selectedId = sessions[0]?.id ?? '';
+        connection.className = 'connection online';
+        connection.textContent = '已同步 · ' + sessions.length + ' 张卡片';
+        render();
+      } catch (error) {
+        connection.className = 'connection offline';
+        connection.textContent = '上位机桥接未连接';
+      } finally {
+        requestRunning = false;
+      }
+    }
+
+    function navigate(delta) {
+      if (sessions.length < 2) return;
+      const next = (selectedIndex() + delta + sessions.length) % sessions.length;
+      card.classList.add(delta < 0 ? 'slide-right' : 'slide-left');
+      setTimeout(() => {
+        selectedId = sessions[next].id;
+        render();
+        card.classList.remove('slide-left', 'slide-right');
+      }, 130);
+    }
+
+    async function focusCurrent() {
+      const current = currentSession();
+      if (!current) return;
+      try {
+        const response = await fetch(API + '/sessions/' + encodeURIComponent(current.id) + '/focus', { method: 'POST' });
+        if (!response.ok) throw new Error('focus failed');
+        showToast('已让上位机聚焦：' + current.name);
+      } catch {
+        showToast('聚焦失败，请确认上位机正在运行');
+      }
+    }
+
+    screen.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 && event.pointerType === 'mouse') return;
+      pointerStart = { x: event.clientX, y: event.clientY, id: event.pointerId };
+      suppressClick = false;
+      screen.setPointerCapture?.(event.pointerId);
+    });
+    screen.addEventListener('pointerup', (event) => {
+      if (!pointerStart || pointerStart.id !== event.pointerId) return;
+      const dx = event.clientX - pointerStart.x;
+      const dy = event.clientY - pointerStart.y;
+      pointerStart = null;
+      if (Math.abs(dx) >= SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy) * 1.2) {
+        suppressClick = true;
+        // 按需求：左滑切上一个，右滑切下一个。
+        navigate(dx < 0 ? -1 : 1);
+      }
+    });
+    screen.addEventListener('pointercancel', () => { pointerStart = null; });
+    screen.addEventListener('click', () => {
+      if (suppressClick) { suppressClick = false; return; }
+      void focusCurrent();
+    });
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowLeft') navigate(-1);
+      if (event.key === 'ArrowRight') navigate(1);
+      if (event.key === 'Enter' || event.key === ' ') void focusCurrent();
+    });
+
+    void refreshSessions();
+    setInterval(() => void refreshSessions(), POLL_MS);
+  </script>
+</body>
+</html>
