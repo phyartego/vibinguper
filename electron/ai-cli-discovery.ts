@@ -320,34 +320,48 @@ function runCommand(
     : { file, args: [...args], windowsVerbatimArguments: false }
 
   return new Promise((resolve) => {
-    execFile(
-      command.file,
-      command.args,
-      {
-        encoding: 'buffer',
-        timeout,
-        maxBuffer: COMMAND_MAX_BUFFER,
-        windowsHide: true,
-        windowsVerbatimArguments: command.windowsVerbatimArguments
-      },
-      (error, stdout, stderr) => {
-        const failure = error as NodeJS.ErrnoException & {
-          code?: string | number
-          killed?: boolean
-        } | null
-        resolve({
-          code:
-            typeof failure?.code === 'number'
-              ? failure.code
-              : error
-                ? null
-                : 0,
-          stdout: decodeOutput(stdout as Buffer),
-          stderr: decodeOutput(stderr as Buffer),
-          timedOut: Boolean(failure?.killed)
-        })
-      }
-    )
+    const finish = (
+      error: Error | null,
+      stdout: Buffer = Buffer.alloc(0),
+      stderr: Buffer = Buffer.alloc(0)
+    ): void => {
+      const failure = error as NodeJS.ErrnoException & {
+        code?: string | number
+        killed?: boolean
+      } | null
+      resolve({
+        code:
+          typeof failure?.code === 'number'
+            ? failure.code
+            : error
+              ? null
+              : 0,
+        stdout: decodeOutput(stdout),
+        stderr: decodeOutput(stderr),
+        timedOut: Boolean(failure?.killed)
+      })
+    }
+
+    try {
+      execFile(
+        command.file,
+        command.args,
+        {
+          encoding: 'buffer',
+          timeout,
+          maxBuffer: COMMAND_MAX_BUFFER,
+          windowsHide: true,
+          windowsVerbatimArguments: command.windowsVerbatimArguments
+        },
+        (error, stdout, stderr) => finish(error, stdout as Buffer, stderr as Buffer)
+      )
+    } catch (error) {
+      // child_process can throw synchronously for protected AppX/WindowsApps
+      // executables (for example Codex Desktop's packaged resource binary).
+      // Treat that candidate as a failed probe so the rest of the host and WSL
+      // discovery continues instead of rejecting the entire cli:scan IPC call.
+      finish(error as Error)
+    }
   })
 }
 
