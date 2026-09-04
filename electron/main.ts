@@ -41,6 +41,8 @@ import { CodexObserverAdapter } from './agents/adapters/codex'
 import { PiObserverAdapter } from './agents/adapters/pi'
 import { HookIngress } from './hooks/HookIngress'
 import { WorkspaceReader } from './workspace/WorkspaceReader'
+import { DeviceManager } from './device/DeviceManager'
+import { DeviceEventChannel } from '../shared/device-ipc'
 import { WorkspaceReaderEventChannel } from '../shared/workspace-reader'
 import { DisplayPreviewBridge } from './preview/DisplayPreviewBridge'
 
@@ -68,12 +70,26 @@ const eventLog = new EventLog()
 const observerRegistry = new ObserverRegistry()
 const hookIngress = new HookIngress()
 const workspaceReader = new WorkspaceReader()
-workspaceReader.onChanged((change) => {
+const deviceManager = new DeviceManager()
+const broadcastToWindows = (channel: string, payload: unknown): void => {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.webContents.isDestroyed()) {
-      win.webContents.send(WorkspaceReaderEventChannel.Changed, change)
+      win.webContents.send(channel, payload)
     }
   }
+}
+deviceManager.on('changed', (devices) => {
+  broadcastToWindows(DeviceEventChannel.Changed, devices)
+})
+deviceManager.on('log', (event) => {
+  broadcastToWindows(DeviceEventChannel.Log, event)
+})
+deviceManager.on('progress', (event) => {
+  broadcastToWindows(DeviceEventChannel.Progress, event)
+})
+deviceManager.startPolling(2000)
+workspaceReader.onChanged((change) => {
+  broadcastToWindows(WorkspaceReaderEventChannel.Changed, change)
 })
 manager.onTerminalRemoved((terminalId) => workspaceReader.unmount(terminalId))
 observerRegistry.register(new ClaudeObserverAdapter(hookIngress))
@@ -166,6 +182,7 @@ if (isPrimaryInstance) app.whenReady().then(async () => {
     cliDiscovery,
     agentRuntime,
     workspaceReader,
+    deviceManager,
     getWindow: () => (winRef && !winRef.isDestroyed() ? winRef : null),
     getTray: () => trayRef,
     getFloatingWindowController: () => floatingController,
@@ -285,6 +302,7 @@ if (isPrimaryInstance) app.on('before-quit', (event) => {
     displayPreviewBridge?.dispose()
     floatingController?.dispose()
     workspaceReader.clear()
+    await deviceManager.dispose()
     manager.killAll()
     unregisterGlobalShortcut()
     stopThemeWatcher()

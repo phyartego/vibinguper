@@ -26,6 +26,7 @@ export const zhTW = {
     sessions: 'Session',
     terminals: 'Terminal',
     settings: '設定',
+    devicePlugins: '裝置外掛',
     emptySessions: '暫無工作階段',
     emptyTerminals: '暫無終端機',
     expandSidebar: '展開側欄',

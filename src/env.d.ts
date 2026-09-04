@@ -17,6 +17,7 @@ import type {
 import type { BleFloatApi } from '../shared/ble-float'
 import type { VibingDebugShellApi } from './app/AppShell'
 import type { WorkspaceReaderApi } from '../shared/workspace-reader'
+import type { DeviceApi } from '../shared/device-ipc'
 
 // renderer 全局类型：preload 通过 contextBridge 注入 window.ptyApi。
 declare global {
@@ -35,6 +36,7 @@ declare global {
     appApi: AppApi
     appThemeApi: AppThemeApi
     bleFloatApi: BleFloatApi
+    deviceApi: DeviceApi
     __VIBING_E2E__?: true
     __vibingDebugShell?: VibingDebugShellApi
   }

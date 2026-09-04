@@ -29,6 +29,7 @@ export const zhCN = {
     sessions: 'Session',
     terminals: 'Terminal',
     settings: '设置',
+    devicePlugins: '设备插件',
     emptySessions: '暂无会话',
     emptyTerminals: '暂无终端',
     expandSidebar: '展开侧栏',

@@ -1,5 +1,6 @@
 import {
   Home,
+  Cpu,
   PanelLeftOpen,
   SquarePen,
   Terminal as TerminalIcon
@@ -68,6 +69,15 @@ export default function IconRail({
           className={railButtonClass(false)}
         >
           <SquarePen className="size-4" strokeWidth={1.75} />
+        </button>
+        <button
+          type="button"
+          data-testid="rail-device-plugins"
+          title={strings.navigation.devicePlugins}
+          onClick={() => onNavigate('device-plugins')}
+          className={railButtonClass(pageId === 'device-plugins')}
+        >
+          <Cpu className="size-4" strokeWidth={1.75} />
         </button>
       </nav>
 

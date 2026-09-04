@@ -1,4 +1,4 @@
-export type PageId = 'home' | 'settings' | `terminal:${string}`
+export type PageId = 'home' | 'settings' | 'device-plugins' | `terminal:${string}`
 
 export function terminalPage(terminalId: string): PageId {
   return `terminal:${terminalId}`
@@ -12,6 +12,7 @@ export function isPageId(value: unknown): value is PageId {
   return (
     value === 'home' ||
     value === 'settings' ||
+    value === 'device-plugins' ||
     (typeof value === 'string' &&
       value.startsWith('terminal:') &&
       value.length > 9)

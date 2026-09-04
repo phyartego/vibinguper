@@ -26,6 +26,7 @@ export const ko = {
     sessions: 'Session',
     terminals: 'Terminal',
     settings: '설정',
+    devicePlugins: '디바이스 플러그인',
     emptySessions: '세션 없음',
     emptyTerminals: '터미널 없음',
     expandSidebar: '사이드바 펼치기',

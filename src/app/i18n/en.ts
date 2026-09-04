@@ -26,6 +26,7 @@ export const en = {
     sessions: 'Session',
     terminals: 'Terminal',
     settings: 'Settings',
+    devicePlugins: 'Device plugins',
     emptySessions: 'No sessions',
     emptyTerminals: 'No terminals',
     expandSidebar: 'Expand sidebar',

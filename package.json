@@ -14,7 +14,7 @@
     "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "postinstall": "electron-rebuild -f -w node-pty",
+    "postinstall": "node scripts/rebuild-natives.mjs",
     "build:win": "npm run release:win",
     "build:mac": "npm run release:mac",
     "release:win": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/release-win.ps1",
@@ -101,6 +101,7 @@
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "serialport": "^13.0.0",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

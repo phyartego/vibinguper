@@ -9,6 +9,8 @@ import TopTabBar from './TopTabBar'
 import TerminalPage from './TerminalPage'
 import HomePage from './HomePage'
 import SettingsPage from './SettingsPage'
+import DevicePluginsPage from '../device-plugins/DevicePluginsPage'
+import { confirmLeaveDevicePlugins } from '../device-plugins/leave-guard'
 import NewSessionFlow from './NewSessionFlow'
 import CloseSessionDialog from './CloseSessionDialog'
 import TargetCursor from './effects/TargetCursor'
@@ -151,13 +153,16 @@ export default function AppShell() {
 
   const navigate = useCallback(
     (nextPage: PageId): void => {
+      if (pageId === 'device-plugins' && nextPage !== 'device-plugins') {
+        if (!confirmLeaveDevicePlugins()) return
+      }
       const terminalId = terminalIdFromPage(nextPage)
       if (terminalId && terminalIds.has(terminalId)) {
         activateTerminal(terminalId)
       }
       setPageId(nextPage)
     },
-    [activateTerminal, terminalIds]
+    [activateTerminal, pageId, terminalIds]
   )
 
   const openNewSession = useCallback((): void => {
@@ -730,6 +735,7 @@ export default function AppShell() {
                 }
               />
             )}
+            {pageId === 'device-plugins' && <DevicePluginsPage />}
             {pageId === 'settings' && (
               <SettingsPage
                 shells={shells}

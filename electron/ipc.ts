@@ -48,6 +48,8 @@ import type { Tray } from './tray'
 import type { FloatingWindowController } from './floating/FloatingWindowController'
 import { WorkspaceReaderInvokeChannel } from '../shared/workspace-reader'
 import type { WorkspaceReader } from './workspace/WorkspaceReader'
+import { DeviceInvokeChannel, type DeviceWriteFileRequest } from '../shared/device-ipc'
+import type { DeviceManager } from './device/DeviceManager'
 import {
   directoryPickerDefaultPath,
   normalizePickedDirectory
@@ -76,6 +78,7 @@ export interface IpcContext {
   cliDiscovery: AiCliDiscoveryService
   agentRuntime: AgentSessionRuntime
   workspaceReader: WorkspaceReader
+  deviceManager: DeviceManager
   getWindow(): BrowserWindow | null
   getTray(): Tray | null
   getFloatingWindowController(): FloatingWindowController | null
@@ -170,6 +173,74 @@ async function listUserThemes() {
 
 /** 注册所有 pty 相关的 invoke handler，委托 PTYManager。 */
 export function registerIpc(manager: PTYManager, ctx: IpcContext): void {
+  ipcMain.handle(DeviceInvokeChannel.List, () => ctx.deviceManager.list())
+  ipcMain.handle(DeviceInvokeChannel.Connect, (_e, id: string) =>
+    ctx.deviceManager.connect(id)
+  )
+  ipcMain.handle(DeviceInvokeChannel.Disconnect, (_e, id: string) =>
+    ctx.deviceManager.disconnect(id)
+  )
+  ipcMain.handle(DeviceInvokeChannel.PluginList, (_e, deviceId: string) =>
+    ctx.deviceManager.pluginList(deviceId)
+  )
+  ipcMain.handle(DeviceInvokeChannel.Capacity, (_e, deviceId: string) =>
+    ctx.deviceManager.capacity(deviceId)
+  )
+  ipcMain.handle(
+    DeviceInvokeChannel.FileList,
+    (_e, deviceId: string, plugin: string, path?: string, recursive?: boolean) =>
+      ctx.deviceManager.fileList(deviceId, plugin, path, recursive)
+  )
+  ipcMain.handle(DeviceInvokeChannel.TouchRoute, (_e, deviceId: string, route: 'local_ui' | 'usb_touchpad') =>
+    ctx.deviceManager.setTouchRoute(deviceId, route)
+  )
+  ipcMain.handle(
+    DeviceInvokeChannel.ReadFile,
+    (_e, req: { deviceId: string; plugin: string; path: string }) =>
+      ctx.deviceManager.readFile(req.deviceId, req.plugin, req.path)
+  )
+  ipcMain.handle(DeviceInvokeChannel.WriteFile, (_e, req: DeviceWriteFileRequest) => {
+    const files = req.files ?? (req.path !== undefined && req.data !== undefined
+      ? [{ path: req.path, data: req.data }]
+      : [])
+    return ctx.deviceManager.writeFiles(req.deviceId, req.plugin, files, {
+      generation: req.generation,
+      run: req.run === true
+    })
+  })
+  ipcMain.handle(DeviceInvokeChannel.SaveAndRun, (_e, req: DeviceWriteFileRequest) => {
+    const files = req.files ?? (req.path !== undefined && req.data !== undefined
+      ? [{ path: req.path, data: req.data }]
+      : [])
+    return ctx.deviceManager.writeFiles(req.deviceId, req.plugin, files, {
+      generation: req.generation,
+      run: true
+    })
+  })
+  ipcMain.handle(
+    DeviceInvokeChannel.Mkdir,
+    (_e, deviceId: string, plugin: string, path: string, generation: number) =>
+      ctx.deviceManager.mkdir(deviceId, plugin, path, generation)
+  )
+  ipcMain.handle(
+    DeviceInvokeChannel.Rename,
+    (
+      _e,
+      deviceId: string,
+      plugin: string,
+      from: string,
+      to: string,
+      generation: number
+    ) => ctx.deviceManager.rename(deviceId, plugin, from, to, generation)
+  )
+  ipcMain.handle(
+    DeviceInvokeChannel.Delete,
+    (_e, deviceId: string, plugin: string, path: string, generation: number) =>
+      ctx.deviceManager.deletePath(deviceId, plugin, path, generation)
+  )
+  ipcMain.handle(DeviceInvokeChannel.Abort, (_e, deviceId: string) =>
+    ctx.deviceManager.abort(deviceId)
+  )
   ipcMain.handle(WorkspaceReaderInvokeChannel.Describe, (_event, terminalId: unknown) =>
     ctx.workspaceReader.describe(terminalId)
   )

@@ -64,6 +64,15 @@ import {
   type BleFloatApi,
   type BleFloatConnectionState
 } from '../shared/ble-float'
+import {
+  DeviceEventChannel,
+  DeviceInvokeChannel,
+  type DeviceApi,
+  type DeviceInfo,
+  type DeviceLogEvent,
+  type DeviceProgressEvent,
+  type DeviceWriteFileRequest
+} from '../shared/device-ipc'
 
 /** 推算 Windows build 号（os.release() 形如 "10.0.26200"）。 */
 function windowsBuildNumber(): number {
@@ -385,6 +394,57 @@ const bleFloatApi: BleFloatApi = {
   }
 }
 
+const deviceApi: DeviceApi = {
+  list: () => ipcRenderer.invoke(DeviceInvokeChannel.List),
+  connect: (id) => ipcRenderer.invoke(DeviceInvokeChannel.Connect, id),
+  disconnect: (id) => ipcRenderer.invoke(DeviceInvokeChannel.Disconnect, id),
+  abort: (deviceId) => ipcRenderer.invoke(DeviceInvokeChannel.Abort, deviceId),
+  pluginList: (deviceId) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.PluginList, deviceId),
+  fileList: (deviceId, plugin, path, recursive) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.FileList, deviceId, plugin, path, recursive),
+  mkdir: (deviceId, plugin, path, generation) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.Mkdir, deviceId, plugin, path, generation),
+  rename: (deviceId, plugin, from, to, generation) =>
+    ipcRenderer.invoke(
+      DeviceInvokeChannel.Rename,
+      deviceId,
+      plugin,
+      from,
+      to,
+      generation
+    ),
+  deletePath: (deviceId, plugin, path, generation) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.Delete, deviceId, plugin, path, generation),
+  capacity: (deviceId) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.Capacity, deviceId),
+  readFile: (req) => ipcRenderer.invoke(DeviceInvokeChannel.ReadFile, req),
+  writeFile: (req: DeviceWriteFileRequest) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.WriteFile, req),
+  saveAndRun: (req: DeviceWriteFileRequest) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.SaveAndRun, req),
+  setTouchRoute: (deviceId, route) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.TouchRoute, deviceId, route),
+  onChanged: (cb) => {
+    const handler = (_e: IpcRendererEvent, devices: DeviceInfo[]): void => cb(devices)
+    ipcRenderer.on(DeviceEventChannel.Changed, handler)
+    return () => ipcRenderer.removeListener(DeviceEventChannel.Changed, handler)
+  },
+  onLog: (cb) => {
+    const handler = (_e: IpcRendererEvent, event: DeviceLogEvent | string): void => {
+      if (typeof event === 'string') cb({ deviceId: '', line: event })
+      else cb(event)
+    }
+    ipcRenderer.on(DeviceEventChannel.Log, handler)
+    return () => ipcRenderer.removeListener(DeviceEventChannel.Log, handler)
+  },
+  onProgress: (cb) => {
+    const handler = (_e: IpcRendererEvent, event: DeviceProgressEvent): void => cb(event)
+    ipcRenderer.on(DeviceEventChannel.Progress, handler)
+    return () => ipcRenderer.removeListener(DeviceEventChannel.Progress, handler)
+  }
+}
+
 try {
   contextBridge.exposeInMainWorld('ptyApi', ptyApi)
   contextBridge.exposeInMainWorld('clipboardApi', clipboardApi)
@@ -400,6 +460,7 @@ try {
   contextBridge.exposeInMainWorld('appApi', appApi)
   contextBridge.exposeInMainWorld('appThemeApi', appThemeApi)
   contextBridge.exposeInMainWorld('bleFloatApi', bleFloatApi)
+  contextBridge.exposeInMainWorld('deviceApi', deviceApi)
   // E2E：主进程设置 VIBING_E2E 时，向渲染进程注入标记，激活 debugBridge（即便是生产构建）
   if (process.env['VIBING_E2E']) {
     contextBridge.exposeInMainWorld('__VIBING_E2E__', true)

@@ -26,6 +26,7 @@ export const ja = {
     sessions: 'Session',
     terminals: 'Terminal',
     settings: '設定',
+    devicePlugins: 'デバイスプラグイン',
     emptySessions: 'セッションなし',
     emptyTerminals: 'ターミナルなし',
     expandSidebar: 'サイドバーを展開',
