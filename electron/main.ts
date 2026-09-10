@@ -42,7 +42,7 @@ import { PiObserverAdapter } from './agents/adapters/pi'
 import { HookIngress } from './hooks/HookIngress'
 import { WorkspaceReader } from './workspace/WorkspaceReader'
 import { DeviceManager } from './device/DeviceManager'
-import { DeviceEventChannel } from '../shared/device-ipc'
+import { DeviceEventChannel, type DeviceInfo } from '../shared/device-ipc'
 import { WorkspaceReaderEventChannel } from '../shared/workspace-reader'
 import { DisplayPreviewBridge } from './preview/DisplayPreviewBridge'
 
@@ -78,8 +78,14 @@ const broadcastToWindows = (channel: string, payload: unknown): void => {
     }
   }
 }
-deviceManager.on('changed', (devices) => {
+let usbSessionConnected = false
+deviceManager.on('changed', (devices: DeviceInfo[]) => {
   broadcastToWindows(DeviceEventChannel.Changed, devices)
+  const now = devices.some((device) => device.connected)
+  if (now && !usbSessionConnected) {
+    bleBroadcaster?.onConnected()
+  }
+  usbSessionConnected = now
 })
 deviceManager.on('log', (event) => {
   broadcastToWindows(DeviceEventChannel.Log, event)
@@ -242,7 +248,14 @@ if (isPrimaryInstance) app.whenReady().then(async () => {
     listActive: () => agentRuntime.listActive(),
     transport: bleTransport,
     focusSession: (sessionId) =>
-      floatingController?.focusSession(sessionId) ?? false
+      floatingController?.focusSession(sessionId) ?? false,
+    usbConnected: () => deviceManager.connectedIds().length > 0,
+    pushUsbSession: async (data) => {
+      const ids = deviceManager.connectedIds()
+      for (const id of ids) {
+        await deviceManager.pushSession(id, data)
+      }
+    }
   })
   bleTransport.wire(bleBroadcaster)
   await floatingController.setEnabled(prefs.floatingWindowEnabled)

@@ -17,6 +17,8 @@ import {
   BLE_FRAGMENT_HEADER_SIZE,
   fragmentSessionData
 } from '../../shared/ble-float'
+import { VB_CDC_MAX_PAYLOAD } from '../../shared/cdc-file-protocol'
+import type { BleSessionDataWire } from '../../shared/ble-float'
 import {
   buildSessionData,
   type ShortIdMapEntry
@@ -46,6 +48,9 @@ export interface SessionBleBroadcasterDeps {
    * 恢复并置顶主窗口 + 向 renderer 发 app:focus-session。
    */
   focusSession(sessionId: string): boolean
+  /** USB CDC 已握手时也推同一份 §3.1 快照（SESSION_PUSH）。 */
+  usbConnected?: () => boolean
+  pushUsbSession?: (data: BleSessionDataWire) => Promise<void>
 }
 
 export class SessionBleBroadcaster {
@@ -108,7 +113,9 @@ export class SessionBleBroadcaster {
 
   private push(): void {
     if (this.disposed) return
-    if (!this.deps.transport.isConnected()) return
+    const ble = this.deps.transport.isConnected()
+    const usb = this.deps.usbConnected?.() === true
+    if (!ble && !usb) return
 
     const projections = this.deps.listActive()
     this.seq = (this.seq + 1) & 0xffff
@@ -135,10 +142,23 @@ export class SessionBleBroadcaster {
       return
     }
 
-    this.msgId = (this.msgId + 1) & 0xff
-    const packets = fragmentSessionData(this.msgId, jsonBytes, this.chunkBytes)
-    for (const packet of packets) {
-      this.deps.transport.write(packet)
+    if (ble) {
+      this.msgId = (this.msgId + 1) & 0xff
+      const packets = fragmentSessionData(this.msgId, jsonBytes, this.chunkBytes)
+      for (const packet of packets) {
+        this.deps.transport.write(packet)
+      }
+    }
+    if (usb && this.deps.pushUsbSession) {
+      if (jsonBytes.length > VB_CDC_MAX_PAYLOAD) {
+        console.warn(
+          `[usb-cdc] session data ${jsonBytes.length}B exceeds ${VB_CDC_MAX_PAYLOAD}B SESSION_PUSH limit; skipped`
+        )
+      } else {
+        void this.deps.pushUsbSession(data).catch((error: unknown) => {
+          console.warn('[usb-cdc] SESSION_PUSH failed:', error)
+        })
+      }
     }
   }
 }

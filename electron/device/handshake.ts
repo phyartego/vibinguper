@@ -39,6 +39,20 @@ export function normalizeSerial(value: string): string {
   return value.replace(/[^0-9A-Za-z]/g, '').toUpperCase()
 }
 
+/**
+ * Firmware contract: the USB iSerial is `VB` + 12 hex chars (MAC address).
+ * Only a host-side serial with this exact shape may be compared against
+ * DEVICE_INFO.serial. Windows composite CDC reports the interface instance
+ * (`USB\...&MI_00\8&5D5D7E&0&0000` → serialNumber `8&5D5D7E&0&0000`) and
+ * Linux/macOS may report plain `COMx`/device paths instead; neither is the
+ * device iSerial, so they must never trigger a serial mismatch.
+ */
+const VB_SERIAL_CONTRACT = /^VB[0-9A-F]{12}$/
+
+export function looksLikeFirmwareSerial(value: string): boolean {
+  return VB_SERIAL_CONTRACT.test(normalizeSerial(value))
+}
+
 export function parseCapabilities(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     return raw.map((item) => String(item).toLowerCase()).filter(Boolean)
@@ -126,7 +140,14 @@ export function verifyHandshake(
   if (!serialRaw) {
     throw new HandshakeError('serial', 'missing serial in DEVICE_INFO')
   }
-  if (usbSerial && normalizeSerial(usbSerial) !== normalizeSerial(serialRaw)) {
+  // Enforce the iSerial contract only when the host side itself looks like
+  // `VB` + MAC. Anything else (Windows MI_00 instance, COM path, test rigs)
+  // cannot be trusted as the device serial, so the DEVICE_INFO value wins.
+  if (
+    usbSerial &&
+    looksLikeFirmwareSerial(usbSerial) &&
+    normalizeSerial(usbSerial) !== normalizeSerial(serialRaw)
+  ) {
     throw new HandshakeError(
       'serial',
       `serial mismatch: usb=${usbSerial} device=${serialRaw}`

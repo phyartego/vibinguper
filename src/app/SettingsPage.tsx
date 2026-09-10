@@ -1,5 +1,5 @@
 import { Minus, Plus, RefreshCw } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { CliRuntimeError, ShellOption } from '../../shared/ipc-contract'
 import type {
   DeviceGestureAction,
@@ -21,7 +21,7 @@ const colorKeys = [
   'brightMagenta', 'brightCyan', 'brightWhite'
 ] as const
 
-const deviceThemeIds: readonly DeviceThemeId[] = ['ocean', 'midnight', 'light']
+const deviceThemeIds: readonly DeviceThemeId[] = ['ocean', 'midnight', 'light', 'whale_mad']
 const gestureActionIds: readonly DeviceGestureAction[] = [
   'card_next', 'card_prev', 'none', 'ctrl_c', 'ctrl_v', 'ctrl_x', 'ctrl_z',
   'ctrl_shift_z', 'alt_left', 'alt_right'
@@ -49,6 +49,7 @@ export default function SettingsPage({
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [deviceId, setDeviceId] = useState('')
   const [deviceBusy, setDeviceBusy] = useState(false)
+  const [deviceRefreshing, setDeviceRefreshing] = useState(false)
   const deviceBusyRef = useRef(false)
   const [deviceError, setDeviceError] = useState<string | null>(null)
   // 主题热重载后注册表版本自增，订阅以重新读取当前注册表。
@@ -82,6 +83,9 @@ export default function SettingsPage({
     group: themeGroups[theme.type]
   })).sort(byThemeType)
   const device = devices.find((item) => item.id === deviceId)
+  // 主进程上报的 lastError 与本页操作错误一起展示，去重避免相同字符串出现两次。
+  const deviceIssues = Array.from(new Set([device?.lastError ?? null, deviceError]))
+    .filter((item): item is string => item !== null && item.length > 0)
   const deviceThemeOptions: DropdownOption[] = [
     ...(device?.deviceTheme === 'custom'
       ? [{ value: 'custom', label: strings.settings.deviceThemeNames.custom }]
@@ -95,17 +99,28 @@ export default function SettingsPage({
     value,
     label: strings.settings.gestureActionNames[value]
   }))
+  // 未连接时 hint 指明是「没连 USB」，而不是下拉框本身不可用。
+  const deviceRowGestureHint = !device?.connected
+    ? strings.settings.deviceNeedConnect
+    : device.capabilities?.includes('gesture_map')
+      ? strings.settings.gestureHint
+      : strings.settings.deviceUnsupported
+
+  // 列表更新后尽量保留当前选择；当前设备消失时回退到已连接设备或第一台。
+  const applyDeviceList = useCallback((next: DeviceInfo[]): void => {
+    setDevices(next)
+    setDeviceId((current) =>
+      next.some((item) => item.id === current)
+        ? current
+        : next.find((item) => item.connected)?.id ?? next[0]?.id ?? ''
+    )
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     const updateDevices = (next: DeviceInfo[]): void => {
       if (cancelled) return
-      setDevices(next)
-      setDeviceId((current) =>
-        next.some((item) => item.id === current)
-          ? current
-          : next.find((item) => item.connected)?.id ?? next[0]?.id ?? ''
-      )
+      applyDeviceList(next)
     }
     const unsubscribe = window.deviceApi.onChanged(updateDevices)
     void window.deviceApi.list().then(updateDevices).catch((error: unknown) => {
@@ -115,7 +130,19 @@ export default function SettingsPage({
       cancelled = true
       unsubscribe()
     }
-  }, [])
+  }, [applyDeviceList])
+
+  // 空态下的手动重扫：仅再次 list()，不触碰连接状态机。
+  const refreshDevices = (): void => {
+    if (deviceRefreshing) return
+    setDeviceRefreshing(true)
+    void window.deviceApi.list()
+      .then((next) => applyDeviceList(next))
+      .catch((error: unknown) => {
+        setDeviceError(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => setDeviceRefreshing(false))
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -232,24 +259,37 @@ export default function SettingsPage({
           </Section>
 
           <Section label="device" title={strings.settings.sections.device}>
-            <Row label={strings.settings.device} hint={device?.connected ? strings.settings.deviceConnected : strings.settings.deviceDisconnected}>
+            <Row label={strings.settings.device} hint={devices.length === 0 ? strings.settings.deviceNoPort : device?.connected ? strings.settings.deviceConnected : strings.settings.deviceDisconnected}>
               <div className="flex items-center gap-2">
                 <Dropdown testId="settings-device" value={deviceId} disabled={devices.length === 0 || deviceBusy} options={devices.map((item) => ({ value: item.id, label: item.serial }))} onChange={setDeviceId} />
-                <button type="button" data-testid="settings-device-connect" disabled={!deviceId || deviceBusy} onClick={() => void toggleDeviceConnection()} className="cursor-target rounded-lg border border-border-default bg-input px-2.5 py-1.5 font-pingfang text-[11px] text-text-muted transition-colors hover:bg-input-hover hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" data-testid="settings-device-connect" disabled={!deviceId || deviceBusy} title={devices.length === 0 ? strings.settings.deviceNoPort : undefined} onClick={() => void toggleDeviceConnection()} className="cursor-target rounded-lg border border-border-default bg-input px-2.5 py-1.5 font-pingfang text-[11px] text-text-muted transition-colors hover:bg-input-hover hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-50">
                   {deviceBusy ? strings.settings.deviceWorking : device?.connected ? strings.settings.disconnectDevice : strings.settings.connectDevice}
                 </button>
               </div>
             </Row>
-            <Row label={strings.settings.deviceTheme} hint={strings.settings.deviceThemeHint}>
+            {devices.length === 0 && (
+              <div data-testid="settings-device-empty" className="border-b border-border-faint py-3">
+                <p className="font-pingfang text-[11px] leading-relaxed break-words text-text-faint">{strings.settings.deviceEmpty}</p>
+                <button type="button" data-testid="settings-device-refresh" disabled={deviceRefreshing} aria-busy={deviceRefreshing} onClick={refreshDevices} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-input px-2.5 py-1.5 font-pingfang text-[11px] font-medium text-text-muted transition-colors hover:bg-input-hover hover:text-text-secondary disabled:cursor-wait disabled:opacity-70">
+                  <RefreshCw className={`size-3 ${deviceRefreshing ? 'animate-spin' : ''}`} strokeWidth={1.75} />
+                  {strings.settings.deviceRefresh}
+                </button>
+              </div>
+            )}
+            <Row label={strings.settings.deviceTheme} hint={!device?.connected ? strings.settings.deviceNeedConnect : device.capabilities?.includes('device_theme') ? strings.settings.deviceThemeHint : strings.settings.deviceUnsupported}>
               <Dropdown testId="settings-device-theme" value={device?.deviceTheme ?? ''} disabled={deviceBusy || !device?.connected || !device.capabilities?.includes('device_theme')} options={deviceThemeOptions} onChange={(value) => void changeDeviceTheme(value)} />
             </Row>
-            <Row label={strings.settings.swipeLeft} hint={strings.settings.gestureHint}>
+            <Row label={strings.settings.swipeLeft} hint={deviceRowGestureHint}>
               <Dropdown testId="settings-gesture-left" value={device?.gestureMap?.left ?? 'card_next'} disabled={deviceBusy || !device?.connected || !device.capabilities?.includes('gesture_map')} options={gestureOptions} onChange={(value) => void changeGesture('left', value)} />
             </Row>
-            <Row label={strings.settings.swipeRight} hint={strings.settings.gestureHint}>
+            <Row label={strings.settings.swipeRight} hint={deviceRowGestureHint}>
               <Dropdown testId="settings-gesture-right" value={device?.gestureMap?.right ?? 'card_prev'} disabled={deviceBusy || !device?.connected || !device.capabilities?.includes('gesture_map')} options={gestureOptions} onChange={(value) => void changeGesture('right', value)} />
             </Row>
-            {deviceError && <p data-testid="settings-device-error" className="py-2 font-pingfang text-[11px] text-status-error">{deviceError}</p>}
+            {deviceIssues.length > 0 && (
+              <div data-testid="settings-device-error" className="flex flex-col gap-1 border-b border-border-faint py-2">
+                {deviceIssues.map((message) => <p key={message} className="font-pingfang text-[11px] break-words text-status-error">{message}</p>)}
+              </div>
+            )}
           </Section>
 
           <Section label="terminal" title={strings.settings.sections.terminal}>

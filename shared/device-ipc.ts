@@ -30,7 +30,7 @@ export interface DeviceCapacity {
   free: number
 }
 
-export const DEVICE_THEMES = ['ocean', 'midnight', 'light'] as const
+export const DEVICE_THEMES = ['ocean', 'midnight', 'light', 'whale_mad'] as const
 export type DeviceTheme = (typeof DEVICE_THEMES)[number]
 export type DeviceThemeId = DeviceTheme
 export type DeviceThemeStatus = DeviceTheme | 'custom'

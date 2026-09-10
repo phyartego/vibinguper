@@ -57,6 +57,7 @@ export const VB_CDC_CMD = {
   GESTURE_MAP_GET: 0x0074,
   GESTURE_MAP_SET: 0x0075,
   LOG_SUBSCRIBE: 0x0080,
+  SESSION_PUSH: 0x0090,
   CANCEL: 0x00ff
 } as const
 

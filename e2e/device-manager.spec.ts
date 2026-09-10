@@ -14,7 +14,7 @@ import {
   type OpenPort,
   type SerialBinding
 } from '../electron/device/DeviceManager'
-import { HandshakeError, verifyHandshake } from '../electron/device/handshake'
+import { HandshakeError, looksLikeFirmwareSerial, verifyHandshake } from '../electron/device/handshake'
 import { saveFailureState } from '../shared/plugin-files'
 
 const encoder = new TextEncoder()
@@ -169,6 +169,7 @@ function vibingDevice(overrides?: {
         return reply(frame, { ok: true })
       case VB_CDC_CMD.DEVICE_THEME_SET:
       case VB_CDC_CMD.GESTURE_MAP_SET:
+      case VB_CDC_CMD.SESSION_PUSH:
         return reply(frame, { ok: true })
       case VB_CDC_CMD.CAPACITY:
         return reply(frame, { total: 4096, used: 128, free: 3968 })
@@ -316,6 +317,86 @@ test('handshake rejects wrong proto, missing serial, missing cap', () => {
   ).toBeUndefined()
 })
 
+test('windows composite CDC instance and COM paths never trigger serial mismatch', async () => {
+  const { port } = vibingDevice({ serial: 'VB28848547989C' })
+  const mgr = new DeviceManager({
+    binding: makeBinding(port, [
+      { path: 'COM8', vendorId: '303A', productId: '1001', serialNumber: '8&5D5D7E&0&0000' }
+    ]),
+    frameTimeoutMs: 200
+  })
+  const listed = await mgr.list()
+  expect(listed).toHaveLength(1)
+  const info = await mgr.connect('8&5D5D7E&0&0000')
+  expect(info.connected).toBe(true)
+  expect(info.protoCompatible).toBe(true)
+  // DEVICE_INFO.serial stays the authoritative/display serial, but the
+  // enumeration id (Windows interface instance) keeps addressing the device.
+  expect(info.serial).toBe('VB28848547989C')
+  expect(info.id).toBe('8&5D5D7E&0&0000')
+  const relisted = await mgr.list()
+  expect(relisted[0]?.id).toBe('8&5D5D7E&0&0000')
+  expect(relisted[0]?.serial).toBe('VB28848547989C')
+  expect(relisted[0]?.connected).toBe(true)
+  await mgr.dispose()
+})
+
+test('host serial without the VB+MAC contract shape skips the equality check', () => {
+  const payload = { proto: 1, serial: 'VB28848547989C', capabilities: ['file', 'plugin'] }
+  expect(looksLikeFirmwareSerial('VB28848547989C')).toBe(true)
+  expect(looksLikeFirmwareSerial('8&5D5D7E&0&0000')).toBe(false)
+  expect(looksLikeFirmwareSerial('COM8')).toBe(false)
+  expect(looksLikeFirmwareSerial('VBTEST')).toBe(false)
+  expect(() => verifyHandshake('8&5D5D7E&0&0000', payload)).not.toThrow()
+  expect(() => verifyHandshake('COM8', payload)).not.toThrow()
+  expect(() => verifyHandshake('', payload)).not.toThrow()
+  // casing/separators on a contract-shaped serial still compare equal
+  expect(
+    verifyHandshake('vb28848547989c', { ...payload, serial: 'VB28848547989C' }).serial
+  ).toBe('VB28848547989C')
+})
+
+test('firmware-contract serial mismatch still fails the handshake', async () => {
+  expect(() =>
+    verifyHandshake('VBAAAAAAAAAAAA', {
+      proto: 1,
+      serial: 'VBBBBBBBBBBBBB',
+      capabilities: ['file', 'plugin']
+    })
+  ).toThrow(/serial mismatch/)
+
+  const { port } = vibingDevice({ serial: 'VBBBBBBBBBBBBB' })
+  const mgr = new DeviceManager({
+    binding: makeBinding(port, [
+      { path: 'COM8', vendorId: '303A', productId: '1001', serialNumber: 'VBAAAAAAAAAAAA' }
+    ]),
+    frameTimeoutMs: 200
+  })
+  await expect(mgr.connect('VBAAAAAAAAAAAA')).rejects.toThrow(/serial mismatch/)
+  expect(port.closed).toBe(true)
+  await mgr.dispose()
+})
+
+test('list() rejects when serialport enumeration fails instead of returning []', async () => {
+  const boom = new Error('binding list exploded')
+  const mgr = new DeviceManager({
+    binding: {
+      list: async () => {
+        throw boom
+      },
+      open: async () => {
+        throw new Error('not opened')
+      }
+    }
+  })
+  await expect(mgr.list()).rejects.toBe(boom)
+  // polling keeps swallowing so the interval never crashes the process
+  mgr.startPolling(20)
+  await new Promise((r) => setTimeout(r, 60))
+  mgr.stopPolling()
+  await mgr.dispose()
+})
+
 test('DeviceManager handshake stores info and VID/PID is only a filter', async () => {
   const { port } = vibingDevice()
   const logs: string[] = []
@@ -341,6 +422,22 @@ test('DeviceManager handshake stores info and VID/PID is only a filter', async (
   expect(info.deviceTheme).toBe('ocean')
   expect(info.gestureMap).toEqual({ left: 'card_next', right: 'card_prev' })
   await expect.poll(() => logs.join('\n')).toContain('boot ok')
+  await mgr.dispose()
+})
+
+test('SESSION_PUSH sends the BLE session snapshot JSON over CDC', async () => {
+  const { port } = vibingDevice()
+  const mgr = new DeviceManager({ binding: makeBinding(port), frameTimeoutMs: 200 })
+  await mgr.connect('VBTEST')
+  const snapshot = {
+    seq: 1,
+    now: 1700000000,
+    focus: 'a1b2c3d4',
+    items: [{ id: 'a1b2c3d4', name: 'claude', s: 'n', a: 1, tc: 0, la: 1700000000 }]
+  }
+  await mgr.pushSession('VBTEST', snapshot)
+  const pushed = port.writes.find((frame) => frame.command === VB_CDC_CMD.SESSION_PUSH)
+  expect(jsonPayload(pushed!)).toEqual(snapshot)
   await mgr.dispose()
 })
 

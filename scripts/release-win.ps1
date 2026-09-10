@@ -89,6 +89,9 @@ try {
   & node (Join-Path $workspace 'scripts\verify-packaged-tray.cjs') $unpackedExe
   if ($LASTEXITCODE -ne 0) { throw 'Packaged tray runtime verification failed.' }
 
+  & node (Join-Path $workspace 'scripts\assert-packaged-serialport.cjs') (Join-Path $releaseDir 'win-unpacked') --platform win32 --arch x64
+  if ($LASTEXITCODE -ne 0) { throw 'Packaged serialport native module verification failed; USB CDC devices would be unusable.' }
+
   $installerIcon = Get-IconDigest $installerPath
   $appIcon = Get-IconDigest $unpackedExe
   $defaultElectron = Join-Path $workspace 'node_modules\electron\dist\electron.exe'

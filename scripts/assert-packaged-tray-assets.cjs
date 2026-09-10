@@ -1,6 +1,9 @@
 const { existsSync, readdirSync } = require('node:fs')
 const { join } = require('node:path')
 
+// Explicit .cjs extension: extension-less require() does not resolve .cjs files.
+const { assertPackagedSerialport } = require('./assert-packaged-serialport.cjs')
+
 const REQUIRED_TRAY_ASSETS = [
   'vibing-16.png',
   'vibing-32.png',
@@ -21,12 +24,22 @@ function packagedResourcesDir(context) {
   return join(context.appOutDir, appBundle, 'Contents', 'Resources')
 }
 
-exports.default = async function assertPackagedTrayAssets(context) {
-  const trayDir = join(packagedResourcesDir(context), 'tray')
+// build.afterPack entry: verifies the packaged tray assets and the packaged
+// serialport native module (see assert-packaged-serialport.cjs).
+exports.default = async function afterPack(context) {
+  const resourcesDir = packagedResourcesDir(context)
+
+  const trayDir = join(resourcesDir, 'tray')
   const missing = REQUIRED_TRAY_ASSETS.filter(
     (filename) => !existsSync(join(trayDir, filename))
   )
   if (missing.length > 0) {
     throw new Error(`Packaged tray assets are missing: ${missing.join(', ')}`)
   }
+
+  assertPackagedSerialport({
+    resourcesDir,
+    platform: context.electronPlatformName,
+    arch: context.arch
+  })
 }

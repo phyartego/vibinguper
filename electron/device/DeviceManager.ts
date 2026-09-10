@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { SerialPort } from 'serialport'
 import {
   VB_CDC_CH,
   VB_CDC_CMD,
@@ -174,22 +175,10 @@ function toPromise(fn: (cb: (err?: Error | null) => void) => unknown): Promise<v
 }
 
 async function defaultBinding(): Promise<SerialBinding> {
-  const mod = (await import('serialport')) as {
-    SerialPort: {
-      list(): Promise<ListedPort[]>
-      new (opts: { path: string; baudRate: number; autoOpen?: boolean }): {
-        open(cb?: (err?: Error | null) => void): unknown
-        close(cb?: (err?: Error | null) => void): unknown
-        write(data: Buffer, cb: (err?: Error | null) => void): void
-        on(ev: 'data', cb: (data: Buffer) => void): void
-        on(ev: 'error', cb: (err: Error) => void): void
-        on(ev: 'close', cb: () => void): void
-      }
-    }
-  }
-  const { SerialPort } = mod
+  // Static import so packagers keep serialport in the dependency graph; a
+  // load failure here must surface instead of degrading to an empty list.
   return {
-    list: () => SerialPort.list(),
+    list: () => SerialPort.list() as Promise<ListedPort[]>,
     async open(path, baudRate) {
       const port = new SerialPort({ path, baudRate, autoOpen: false })
       await toPromise((cb) => port.open(cb))
@@ -279,46 +268,45 @@ export class DeviceManager extends EventEmitter {
     return this.loadedBinding
   }
 
+  /**
+   * Enumerate matching ports. An empty result is a valid answer; a failing
+   * serialport load or `SerialPort.list()` call must reject so IPC callers
+   * (device:list) see the real error. Polling swallows on its own.
+   */
   async list(): Promise<DeviceInfo[]> {
-    try {
-      const ports = await (await this.binding()).list()
-      const seen = new Set<string>()
-      const found: DeviceInfo[] = []
-      for (const p of ports) {
-        const vid = Number.parseInt(p.vendorId ?? '', 16)
-        const pid = Number.parseInt(p.productId ?? '', 16)
-        if (vid !== VB_USB_VID || pid !== VB_USB_PID) continue
-        const serial = p.serialNumber || p.path
-        seen.add(serial)
-        const prev = this.devices.get(serial)
-        const info: DeviceInfo = {
-          ...(prev ?? {
-            id: serial,
-            serial,
-            connected: false
-          }),
-          id: prev?.id ?? serial,
-          path: p.path,
-          serial: prev?.serial ?? serial,
-          connected: prev?.connected ?? false
-        }
-        this.devices.set(info.id, info)
-        found.push(info)
+    const ports = await (await this.binding()).list()
+    const seen = new Set<string>()
+    for (const p of ports) {
+      const vid = Number.parseInt(p.vendorId ?? '', 16)
+      const pid = Number.parseInt(p.productId ?? '', 16)
+      if (vid !== VB_USB_VID || pid !== VB_USB_PID) continue
+      const serial = p.serialNumber || p.path
+      seen.add(serial)
+      const prev = this.devices.get(serial)
+      const info: DeviceInfo = {
+        ...(prev ?? {
+          id: serial,
+          serial,
+          connected: false
+        }),
+        id: prev?.id ?? serial,
+        path: p.path,
+        serial: prev?.serial ?? serial,
+        connected: prev?.connected ?? false
       }
-      for (const [id, info] of this.devices) {
-        if (!seen.has(id) && !seen.has(info.serial)) {
-          if (info.connected) {
-            await this.disconnect(id).catch(() => undefined)
-          }
-          this.devices.delete(id)
-        }
-      }
-      const list = [...this.devices.values()]
-      this.emit('changed', list)
-      return list
-    } catch {
-      return [...this.devices.values()]
+      this.devices.set(info.id, info)
     }
+    for (const [id, info] of this.devices) {
+      if (!seen.has(id) && !seen.has(info.serial)) {
+        if (info.connected) {
+          await this.disconnect(id).catch(() => undefined)
+        }
+        this.devices.delete(id)
+      }
+    }
+    const list = [...this.devices.values()]
+    this.emit('changed', list)
+    return list
   }
 
   async connect(id: string): Promise<DeviceInfo> {
@@ -384,6 +372,14 @@ export class DeviceManager extends EventEmitter {
       await this.disconnect(id).catch(() => undefined)
       throw error
     }
+  }
+
+  connectedIds(): string[] {
+    return [...this.devices.values()].filter((info) => info.connected).map((info) => info.id)
+  }
+
+  pushSession(id: string, snapshot: unknown): Promise<unknown> {
+    return this.rpc(id, VB_CDC_CMD.SESSION_PUSH, snapshot)
   }
 
   async disconnect(id: string): Promise<void> {
