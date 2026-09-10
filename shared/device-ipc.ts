@@ -7,6 +7,8 @@ export const DeviceInvokeChannel = {
   ReadFile: 'device:readFile',
   WriteFile: 'device:writeFile',
   TouchRoute: 'device:touchRoute',
+  DeviceTheme: 'device:deviceTheme',
+  GestureMap: 'device:gestureMap',
   Capacity: 'device:capacity',
   PluginList: 'device:pluginList',
   FileList: 'device:fileList',
@@ -28,6 +30,31 @@ export interface DeviceCapacity {
   free: number
 }
 
+export const DEVICE_THEMES = ['ocean', 'midnight', 'light'] as const
+export type DeviceTheme = (typeof DEVICE_THEMES)[number]
+export type DeviceThemeId = DeviceTheme
+export type DeviceThemeStatus = DeviceTheme | 'custom'
+
+export const DEVICE_GESTURE_ACTIONS = [
+  'card_next',
+  'card_prev',
+  'none',
+  'ctrl_c',
+  'ctrl_v',
+  'ctrl_x',
+  'ctrl_z',
+  'ctrl_shift_z',
+  'alt_left',
+  'alt_right'
+] as const
+export type DeviceGestureAction = (typeof DEVICE_GESTURE_ACTIONS)[number]
+export type GestureAction = DeviceGestureAction
+
+export interface DeviceGestureMap {
+  left: DeviceGestureAction
+  right: DeviceGestureAction
+}
+
 export interface DeviceInfo {
   id: string
   path: string
@@ -39,6 +66,8 @@ export interface DeviceInfo {
   chip?: string
   hid?: unknown
   touchRoute?: 'local_ui' | 'usb_touchpad'
+  deviceTheme?: DeviceThemeStatus
+  gestureMap?: DeviceGestureMap
   capacity?: DeviceCapacity
   lastError?: string
   capabilities?: string[]
@@ -132,6 +161,12 @@ export interface DeviceApi {
   writeFile(req: DeviceWriteFileRequest): Promise<{ generation?: number }>
   saveAndRun(req: DeviceWriteFileRequest): Promise<{ generation?: number }>
   setTouchRoute(deviceId: string, route: 'local_ui' | 'usb_touchpad'): Promise<void>
+  setDeviceTheme(deviceId: string, theme: DeviceTheme): Promise<void>
+  setGestureMap(
+    deviceId: string,
+    left: DeviceGestureAction,
+    right: DeviceGestureAction
+  ): Promise<void>
   onChanged(cb: (devices: DeviceInfo[]) => void): () => void
   onLog(cb: (event: DeviceLogEvent) => void): () => void
   onProgress(cb: (event: DeviceProgressEvent) => void): () => void

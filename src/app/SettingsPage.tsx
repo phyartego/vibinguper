@@ -1,6 +1,11 @@
 import { Minus, Plus, RefreshCw } from 'lucide-react'
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { CliRuntimeError, ShellOption } from '../../shared/ipc-contract'
+import type {
+  DeviceGestureAction,
+  DeviceInfo,
+  DeviceThemeId
+} from '../../shared/device-ipc'
 import { appLocales, useStrings } from './i18n'
 import { getUiThemeRegistry, useThemeRegistryVersion } from './themeRuntime'
 import { terminalThemeIds, terminalThemes } from '../terminal/themes'
@@ -15,6 +20,12 @@ const colorKeys = [
   'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue',
   'brightMagenta', 'brightCyan', 'brightWhite'
 ] as const
+
+const deviceThemeIds: readonly DeviceThemeId[] = ['ocean', 'midnight', 'light']
+const gestureActionIds: readonly DeviceGestureAction[] = [
+  'card_next', 'card_prev', 'none', 'ctrl_c', 'ctrl_v', 'ctrl_x', 'ctrl_z',
+  'ctrl_shift_z', 'alt_left', 'alt_right'
+]
 
 interface SettingsPageProps {
   shells: readonly ShellOption[]
@@ -35,6 +46,11 @@ export default function SettingsPage({
 }: SettingsPageProps) {
   const settings = useSettingsStore()
   const strings = useStrings()
+  const [devices, setDevices] = useState<DeviceInfo[]>([])
+  const [deviceId, setDeviceId] = useState('')
+  const [deviceBusy, setDeviceBusy] = useState(false)
+  const deviceBusyRef = useRef(false)
+  const [deviceError, setDeviceError] = useState<string | null>(null)
   // 主题热重载后注册表版本自增，订阅以重新读取当前注册表。
   useThemeRegistryVersion((state) => state.version)
   const registry = getUiThemeRegistry()
@@ -65,6 +81,41 @@ export default function SettingsPage({
           : theme.name,
     group: themeGroups[theme.type]
   })).sort(byThemeType)
+  const device = devices.find((item) => item.id === deviceId)
+  const deviceThemeOptions: DropdownOption[] = [
+    ...(device?.deviceTheme === 'custom'
+      ? [{ value: 'custom', label: strings.settings.deviceThemeNames.custom }]
+      : []),
+    ...deviceThemeIds.map((value) => ({
+      value,
+      label: strings.settings.deviceThemeNames[value]
+    }))
+  ]
+  const gestureOptions = gestureActionIds.map((value) => ({
+    value,
+    label: strings.settings.gestureActionNames[value]
+  }))
+
+  useEffect(() => {
+    let cancelled = false
+    const updateDevices = (next: DeviceInfo[]): void => {
+      if (cancelled) return
+      setDevices(next)
+      setDeviceId((current) =>
+        next.some((item) => item.id === current)
+          ? current
+          : next.find((item) => item.connected)?.id ?? next[0]?.id ?? ''
+      )
+    }
+    const unsubscribe = window.deviceApi.onChanged(updateDevices)
+    void window.deviceApi.list().then(updateDevices).catch((error: unknown) => {
+      if (!cancelled) setDeviceError(error instanceof Error ? error.message : String(error))
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -98,6 +149,55 @@ export default function SettingsPage({
     })
   }
 
+  const toggleDeviceConnection = async (): Promise<void> => {
+    if (!deviceId || deviceBusyRef.current) return
+    deviceBusyRef.current = true
+    setDeviceBusy(true)
+    setDeviceError(null)
+    try {
+      if (device?.connected) await window.deviceApi.disconnect(deviceId)
+      else await window.deviceApi.connect(deviceId)
+    } catch (error) {
+      setDeviceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      deviceBusyRef.current = false
+      setDeviceBusy(false)
+    }
+  }
+
+  const changeDeviceTheme = async (value: string): Promise<void> => {
+    if (!device?.connected || deviceBusyRef.current || !device.capabilities?.includes('device_theme')) return
+    if (!deviceThemeIds.includes(value as DeviceThemeId)) return
+    deviceBusyRef.current = true
+    setDeviceBusy(true)
+    setDeviceError(null)
+    try {
+      await window.deviceApi.setDeviceTheme(device.id, value as DeviceThemeId)
+    } catch (error) {
+      setDeviceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      deviceBusyRef.current = false
+      setDeviceBusy(false)
+    }
+  }
+
+  const changeGesture = async (side: 'left' | 'right', value: string): Promise<void> => {
+    if (!device?.connected || deviceBusyRef.current || !device.capabilities?.includes('gesture_map')) return
+    deviceBusyRef.current = true
+    setDeviceBusy(true)
+    setDeviceError(null)
+    const left = side === 'left' ? value as DeviceGestureAction : device.gestureMap?.left ?? 'card_next'
+    const right = side === 'right' ? value as DeviceGestureAction : device.gestureMap?.right ?? 'card_prev'
+    try {
+      await window.deviceApi.setGestureMap(device.id, left, right)
+    } catch (error) {
+      setDeviceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      deviceBusyRef.current = false
+      setDeviceBusy(false)
+    }
+  }
+
   return (
     <ClickSpark sparkColor="var(--vib-accent-spark)" sparkSize={8} sparkRadius={18} sparkCount={10} duration={450}>
       <section data-testid="settings-page" className="sidebar-scroll h-full overflow-y-auto">
@@ -129,6 +229,27 @@ export default function SettingsPage({
             </Row>
             <Row label={strings.settings.globalShortcut} hint={strings.settings.globalShortcutHint}><Toggle testId="settings-global-shortcut" checked={settings.globalShortcutEnabled} onChange={changeGlobalShortcut} /></Row>
             <Row label={strings.settings.floatingWindow} hint={strings.settings.floatingWindowHint}><Toggle testId="settings-floating-window" checked={settings.floatEnabled} onChange={changeFloatingWindow} /></Row>
+          </Section>
+
+          <Section label="device" title={strings.settings.sections.device}>
+            <Row label={strings.settings.device} hint={device?.connected ? strings.settings.deviceConnected : strings.settings.deviceDisconnected}>
+              <div className="flex items-center gap-2">
+                <Dropdown testId="settings-device" value={deviceId} disabled={devices.length === 0 || deviceBusy} options={devices.map((item) => ({ value: item.id, label: item.serial }))} onChange={setDeviceId} />
+                <button type="button" data-testid="settings-device-connect" disabled={!deviceId || deviceBusy} onClick={() => void toggleDeviceConnection()} className="cursor-target rounded-lg border border-border-default bg-input px-2.5 py-1.5 font-pingfang text-[11px] text-text-muted transition-colors hover:bg-input-hover hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-50">
+                  {deviceBusy ? strings.settings.deviceWorking : device?.connected ? strings.settings.disconnectDevice : strings.settings.connectDevice}
+                </button>
+              </div>
+            </Row>
+            <Row label={strings.settings.deviceTheme} hint={strings.settings.deviceThemeHint}>
+              <Dropdown testId="settings-device-theme" value={device?.deviceTheme ?? ''} disabled={deviceBusy || !device?.connected || !device.capabilities?.includes('device_theme')} options={deviceThemeOptions} onChange={(value) => void changeDeviceTheme(value)} />
+            </Row>
+            <Row label={strings.settings.swipeLeft} hint={strings.settings.gestureHint}>
+              <Dropdown testId="settings-gesture-left" value={device?.gestureMap?.left ?? 'card_next'} disabled={deviceBusy || !device?.connected || !device.capabilities?.includes('gesture_map')} options={gestureOptions} onChange={(value) => void changeGesture('left', value)} />
+            </Row>
+            <Row label={strings.settings.swipeRight} hint={strings.settings.gestureHint}>
+              <Dropdown testId="settings-gesture-right" value={device?.gestureMap?.right ?? 'card_prev'} disabled={deviceBusy || !device?.connected || !device.capabilities?.includes('gesture_map')} options={gestureOptions} onChange={(value) => void changeGesture('right', value)} />
+            </Row>
+            {deviceError && <p data-testid="settings-device-error" className="py-2 font-pingfang text-[11px] text-status-error">{deviceError}</p>}
           </Section>
 
           <Section label="terminal" title={strings.settings.sections.terminal}>

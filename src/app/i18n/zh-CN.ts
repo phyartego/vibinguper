@@ -147,6 +147,7 @@ export const zhCN = {
     sections: {
       appearance: '外观',
       layout: '布局',
+      device: '下位机',
       terminal: '终端',
       session: '会话'
     },
@@ -172,6 +173,23 @@ export const zhCN = {
     floatingWindowHint: '独立置顶显示当前 AI CLI 会话状态',
     globalShortcut: '全局快捷键',
     globalShortcutHint: 'Ctrl+Alt+V 切换窗口显示 / 隐藏',
+    device: '设备',
+    deviceConnected: '已连接，可直接同步设置到下位机',
+    deviceDisconnected: '选择 USB 设备并连接后可配置',
+    connectDevice: '连接',
+    disconnectDevice: '断开',
+    deviceWorking: '处理中…',
+    deviceTheme: '下位机主题',
+    deviceThemeHint: '立即写入并持久化到下位机',
+    deviceThemeNames: { custom: '自定义（当前）', ocean: '海洋蓝', midnight: '午夜黑', light: '浅色' },
+    swipeLeft: '触摸板左滑',
+    swipeRight: '触摸板右滑',
+    gestureHint: '映射为本地卡片操作或电脑快捷键',
+    gestureActionNames: {
+      card_next: '下一张卡片', card_prev: '上一张卡片', none: '无动作',
+      ctrl_c: 'Ctrl + C', ctrl_v: 'Ctrl + V', ctrl_x: 'Ctrl + X', ctrl_z: 'Ctrl + Z',
+      ctrl_shift_z: 'Ctrl + Shift + Z', alt_left: 'Alt + ←', alt_right: 'Alt + →'
+    },
     attentionPriority: '注意力优先排序',
     attentionPriorityHint: '开启后，有新活动的会话会移动到导航列表顶部',
     terminalTheme: '终端配色',

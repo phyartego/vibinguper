@@ -48,7 +48,12 @@ import type { Tray } from './tray'
 import type { FloatingWindowController } from './floating/FloatingWindowController'
 import { WorkspaceReaderInvokeChannel } from '../shared/workspace-reader'
 import type { WorkspaceReader } from './workspace/WorkspaceReader'
-import { DeviceInvokeChannel, type DeviceWriteFileRequest } from '../shared/device-ipc'
+import {
+  DeviceInvokeChannel,
+  type DeviceGestureAction,
+  type DeviceTheme,
+  type DeviceWriteFileRequest
+} from '../shared/device-ipc'
 import type { DeviceManager } from './device/DeviceManager'
 import {
   directoryPickerDefaultPath,
@@ -191,8 +196,20 @@ export function registerIpc(manager: PTYManager, ctx: IpcContext): void {
     (_e, deviceId: string, plugin: string, path?: string, recursive?: boolean) =>
       ctx.deviceManager.fileList(deviceId, plugin, path, recursive)
   )
-  ipcMain.handle(DeviceInvokeChannel.TouchRoute, (_e, deviceId: string, route: 'local_ui' | 'usb_touchpad') =>
-    ctx.deviceManager.setTouchRoute(deviceId, route)
+  ipcMain.handle(
+    DeviceInvokeChannel.TouchRoute,
+    (_e, deviceId: string, route: 'local_ui' | 'usb_touchpad') =>
+      ctx.deviceManager.setTouchRoute(deviceId, route)
+  )
+  ipcMain.handle(
+    DeviceInvokeChannel.DeviceTheme,
+    (_e, deviceId: string, theme: DeviceTheme) =>
+      ctx.deviceManager.setDeviceTheme(deviceId, theme)
+  )
+  ipcMain.handle(
+    DeviceInvokeChannel.GestureMap,
+    (_e, deviceId: string, left: DeviceGestureAction, right: DeviceGestureAction) =>
+      ctx.deviceManager.setGestureMap(deviceId, left, right)
   )
   ipcMain.handle(
     DeviceInvokeChannel.ReadFile,

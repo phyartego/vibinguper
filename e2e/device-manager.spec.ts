@@ -143,11 +143,14 @@ function vibingDevice(overrides?: {
           fw_version: '1.2.3',
           hid: { kbd: true },
           touch_route: 'local_ui',
+          device_theme: 'ocean',
+          gesture_map: { left: 'card_next', right: 'card_prev' },
           capacity: { total: 4096, used: 128, free: 3968 }
         }
         if (overrides?.serial !== null) payload.serial = overrides?.serial ?? 'VBTEST'
         if (overrides?.capabilities !== null) {
-          payload.capabilities = overrides?.capabilities ?? ['file', 'plugin']
+          payload.capabilities =
+            overrides?.capabilities ?? ['file', 'plugin', 'device_theme', 'gesture_map']
         }
         return reply(frame, payload)
       }
@@ -163,6 +166,9 @@ function vibingDevice(overrides?: {
             payload: encoder.encode('boot ok')
           })
         })
+        return reply(frame, { ok: true })
+      case VB_CDC_CMD.DEVICE_THEME_SET:
+      case VB_CDC_CMD.GESTURE_MAP_SET:
         return reply(frame, { ok: true })
       case VB_CDC_CMD.CAPACITY:
         return reply(frame, { total: 4096, used: 128, free: 3968 })
@@ -274,6 +280,40 @@ test('handshake rejects wrong proto, missing serial, missing cap', () => {
       capabilities: ['cdc_rpc', 'file_rpc', 'plugin_rpc', 'plugin_fs', 'txn']
     }).serial
   ).toBe('VBABCDEF')
+  const parsed = verifyHandshake('VBTEST', {
+    proto: 1,
+    serial: 'VBTEST',
+    capabilities: ['file', 'plugin', 'device_theme', 'gesture_map'],
+    device_theme: 'midnight',
+    gesture_map: { left: 'ctrl_c', right: 'not-a-real-action' }
+  })
+  expect(parsed.deviceTheme).toBe('midnight')
+  expect(parsed.gestureMap).toEqual({ left: 'ctrl_c', right: 'none' })
+  expect(
+    verifyHandshake('VBTEST', {
+      proto: 1,
+      serial: 'VBTEST',
+      capabilities: ['file', 'plugin', 'device_theme'],
+      device_theme: 'custom'
+    }).deviceTheme
+  ).toBe('custom')
+  expect(
+    verifyHandshake('VBTEST', {
+      proto: 1,
+      serial: 'VBTEST',
+      capabilities: ['file', 'plugin'],
+      device_theme: 'unsupported',
+      gesture_map: { left: 42, right: null }
+    }).deviceTheme
+  ).toBeUndefined()
+  expect(
+    verifyHandshake('VBTEST', {
+      proto: 1,
+      serial: 'VBTEST',
+      capabilities: ['file', 'plugin'],
+      gesture_map: { left: 42, right: null }
+    }).gestureMap
+  ).toBeUndefined()
 })
 
 test('DeviceManager handshake stores info and VID/PID is only a filter', async () => {
@@ -298,7 +338,32 @@ test('DeviceManager handshake stores info and VID/PID is only a filter', async (
   expect(info.capacity?.total).toBe(4096)
   expect(info.hid).toEqual({ kbd: true })
   expect(info.touchRoute).toBe('local_ui')
+  expect(info.deviceTheme).toBe('ocean')
+  expect(info.gestureMap).toEqual({ left: 'card_next', right: 'card_prev' })
   await expect.poll(() => logs.join('\n')).toContain('boot ok')
+  await mgr.dispose()
+})
+
+test('device theme and gesture SET send payloads and emit changed cache', async () => {
+  const { port } = vibingDevice()
+  const mgr = new DeviceManager({ binding: makeBinding(port), frameTimeoutMs: 200 })
+  const changed: Array<{ deviceTheme?: string; gestureMap?: unknown }> = []
+  mgr.on('changed', (devices) => {
+    const info = devices.find((device) => device.id === 'VBTEST')
+    if (info) changed.push({ deviceTheme: info.deviceTheme, gestureMap: info.gestureMap })
+  })
+  await mgr.connect('VBTEST')
+  await mgr.setDeviceTheme('VBTEST', 'midnight')
+  await mgr.setGestureMap('VBTEST', 'ctrl_c', 'ctrl_v')
+
+  const themeSet = port.writes.find((frame) => frame.command === VB_CDC_CMD.DEVICE_THEME_SET)
+  const gestureSet = port.writes.find((frame) => frame.command === VB_CDC_CMD.GESTURE_MAP_SET)
+  expect(jsonPayload(themeSet!)).toEqual({ theme: 'midnight' })
+  expect(jsonPayload(gestureSet!)).toEqual({ left: 'ctrl_c', right: 'ctrl_v' })
+  expect(changed.at(-1)).toEqual({
+    deviceTheme: 'midnight',
+    gestureMap: { left: 'ctrl_c', right: 'ctrl_v' }
+  })
   await mgr.dispose()
 })
 
@@ -421,6 +486,22 @@ test('image upload/download stays binary; generation conflict; save-and-run keep
   expect(read.encoding).toBe('image')
   expect(read.text).toBeUndefined()
   expect(read.bytes?.slice(0, 4)).toEqual([...png])
+  const readFrames = port.writes.filter(
+    (f) => f.command === VB_CDC_CMD.FILE_READ_BEGIN || f.command === VB_CDC_CMD.FILE_READ_CHUNK
+  )
+  expect(readFrames.map((f) => f.txnId)).toEqual([readFrames[0]!.txnId, readFrames[0]!.txnId])
+  expect(readFrames.map((f) => f.seq)).toEqual([0, 1])
+
+  const large = new Uint8Array(2001)
+  large.set(png)
+  files.set('assets/large.bin', large)
+  await mgr.readFile('VBTEST', 'hello_tick', 'assets/large.bin')
+  const largeReadFrames = port.writes.filter(
+    (f) =>
+      (f.command === VB_CDC_CMD.FILE_READ_BEGIN || f.command === VB_CDC_CMD.FILE_READ_CHUNK) &&
+      f.txnId === readFrames[0]!.txnId + 1
+  )
+  expect(largeReadFrames.map((f) => f.seq)).toEqual([0, 1, 2, 3])
 
   await mgr.writeFiles(
     'VBTEST',

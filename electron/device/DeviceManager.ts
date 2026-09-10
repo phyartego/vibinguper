@@ -14,11 +14,13 @@ import {
 import { CdcParser, encodeFrame } from '../../shared/cdc-frame'
 import type {
   DeviceCapacity,
+  DeviceGestureAction,
   DeviceInfo,
   DeviceLogEvent,
   DevicePluginRow,
   DeviceProgressEvent,
   DeviceReadFileResult,
+  DeviceTheme,
   DeviceWriteFile
 } from '../../shared/device-ipc'
 import {
@@ -357,6 +359,8 @@ export class DeviceManager extends EventEmitter {
       info.chip = verified.chip
       info.hid = verified.hid
       info.touchRoute = verified.touchRoute
+      info.deviceTheme = verified.deviceTheme
+      info.gestureMap = verified.gestureMap
       info.capabilities = verified.capabilities
       info.serial = verified.serial
       info.lastError = undefined
@@ -648,6 +652,30 @@ export class DeviceManager extends EventEmitter {
     })
   }
 
+  setDeviceTheme(id: string, theme: DeviceTheme): Promise<void> {
+    return this.rpc(id, VB_CDC_CMD.DEVICE_THEME_SET, { theme }).then(() => {
+      const info = this.devices.get(id)
+      if (info) {
+        info.deviceTheme = theme
+        this.emit('changed', [...this.devices.values()])
+      }
+    })
+  }
+
+  setGestureMap(
+    id: string,
+    left: DeviceGestureAction,
+    right: DeviceGestureAction
+  ): Promise<void> {
+    return this.rpc(id, VB_CDC_CMD.GESTURE_MAP_SET, { left, right }).then(() => {
+      const info = this.devices.get(id)
+      if (info) {
+        info.gestureMap = { left, right }
+        this.emit('changed', [...this.devices.values()])
+      }
+    })
+  }
+
   mkdir(id: string, plugin: string, path: string, generation: number): Promise<unknown> {
     this.guardFileRpc(id, plugin, true)
     return this.rpc(id, VB_CDC_CMD.MKDIR, { plugin, path, generation })
@@ -671,29 +699,50 @@ export class DeviceManager extends EventEmitter {
 
   async readFile(id: string, plugin: string, path: string): Promise<DeviceReadFileResult> {
     this.guardFileRpc(id, plugin, false)
-    const begin = asRecord(await this.rpc(id, VB_CDC_CMD.FILE_READ_BEGIN, { plugin, path }))
-    const size = Number(begin.size ?? 0)
-    const chunks: number[] = []
-    let offset = 0
-    while (offset < size) {
-      const n = Math.min(CHUNK, size - offset)
-      const payload = packChunk(offset, new Uint8Array(n)).subarray(0, 8)
-      payload[4] = n & 0xff
-      payload[5] = (n >>> 8) & 0xff
-      payload[6] = (n >>> 16) & 0xff
-      payload[7] = (n >>> 24) & 0xff
-      const reply = await this.rpcFrame(id, VB_CDC_CMD.FILE_READ_CHUNK, payload)
-      const data = reply.payload.subarray(8)
-      for (const b of data) chunks.push(b)
-      offset += data.length
-      if (data.length === 0) break
+    const session = this.sessions.get(id)
+    if (!session) throw new Error(`device ${id} not connected`)
+    const txn = this.nextTxn()
+    session.activeTxn = txn
+    let seq = 0
+    try {
+      const begin = asRecord(
+        parseJson(
+          await this.rpcFrame(
+            id,
+            VB_CDC_CMD.FILE_READ_BEGIN,
+            jsonBytes({ plugin, path }),
+            { txn, seq: seq++ }
+          )
+        )
+      )
+      const size = Number(begin.size ?? 0)
+      const chunks: number[] = []
+      let offset = 0
+      while (offset < size) {
+        const n = Math.min(CHUNK, size - offset)
+        const payload = packChunk(offset, new Uint8Array(n)).subarray(0, 8)
+        payload[4] = n & 0xff
+        payload[5] = (n >>> 8) & 0xff
+        payload[6] = (n >>> 16) & 0xff
+        payload[7] = (n >>> 24) & 0xff
+        const reply = await this.rpcFrame(id, VB_CDC_CMD.FILE_READ_CHUNK, payload, {
+          txn,
+          seq: seq++
+        })
+        const data = reply.payload.subarray(8)
+        for (const b of data) chunks.push(b)
+        offset += data.length
+        if (data.length === 0) break
+      }
+      const bytes = Uint8Array.from(chunks)
+      const kind = classifyFile(path, bytes)
+      if (kind === 'text') {
+        return { text: decoder.decode(bytes), encoding: 'utf8' }
+      }
+      return { bytes: [...bytes], encoding: kind === 'image' ? 'image' : 'binary' }
+    } finally {
+      if (session.activeTxn === txn) session.activeTxn = undefined
     }
-    const bytes = Uint8Array.from(chunks)
-    const kind = classifyFile(path, bytes)
-    if (kind === 'text') {
-      return { text: decoder.decode(bytes), encoding: 'utf8' }
-    }
-    return { bytes: [...bytes], encoding: kind === 'image' ? 'image' : 'binary' }
   }
 
   async writeFile(

@@ -1,5 +1,12 @@
 import { VB_CDC_PROTO_VERSION } from '../../shared/cdc-file-protocol'
-import type { DeviceCapacity } from '../../shared/device-ipc'
+import {
+  DEVICE_GESTURE_ACTIONS,
+  DEVICE_THEMES,
+  type DeviceCapacity,
+  type DeviceGestureAction,
+  type DeviceGestureMap,
+  type DeviceThemeStatus
+} from '../../shared/device-ipc'
 
 export type HandshakeReason = 'proto' | 'serial' | 'cap'
 
@@ -20,6 +27,8 @@ export type VerifiedDeviceInfo = {
   chip?: string
   hid?: unknown
   touchRoute?: 'local_ui' | 'usb_touchpad'
+  deviceTheme?: DeviceThemeStatus
+  gestureMap?: DeviceGestureMap
   capacity?: DeviceCapacity
   capabilities: string[]
   nativePlugins: string[]
@@ -72,6 +81,36 @@ function asStringArray(raw: unknown): string[] {
   return Array.isArray(raw) ? raw.map((item) => String(item)).filter(Boolean) : []
 }
 
+export function parseDeviceTheme(raw: unknown): DeviceThemeStatus | undefined {
+  if (typeof raw !== 'string') return undefined
+  const value = raw.trim().toLowerCase()
+  return value === 'custom' || (DEVICE_THEMES as readonly string[]).includes(value)
+    ? (value as DeviceThemeStatus)
+    : undefined
+}
+
+export function parseGestureAction(raw: unknown): DeviceGestureAction | undefined {
+  if (typeof raw !== 'string') return undefined
+  const value = raw.trim().toLowerCase()
+  return (DEVICE_GESTURE_ACTIONS as readonly string[]).includes(value)
+    ? (value as DeviceGestureAction)
+    : undefined
+}
+
+/**
+ * Parse the optional DEVICE_INFO gesture map without trusting arbitrary JSON.
+ * A malformed side falls back to `none`; a map with no recognized side is
+ * treated as unavailable so callers can distinguish old firmware.
+ */
+export function parseGestureMap(raw: unknown): DeviceGestureMap | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const value = raw as Record<string, unknown>
+  const left = parseGestureAction(value.left)
+  const right = parseGestureAction(value.right)
+  if (left === undefined && right === undefined) return undefined
+  return { left: left ?? 'none', right: right ?? 'none' }
+}
+
 export function verifyHandshake(
   usbSerial: string,
   payload: Record<string, unknown>
@@ -103,6 +142,8 @@ export function verifyHandshake(
       : payload.touch_route === 'local_ui' || payload.touchRoute === 'local_ui'
         ? 'local_ui'
         : undefined
+  const deviceTheme = parseDeviceTheme(payload.device_theme ?? payload.deviceTheme)
+  const gestureMap = parseGestureMap(payload.gesture_map ?? payload.gestureMap)
   const fwVersion =
     typeof payload.fw_version === 'string'
       ? payload.fw_version
@@ -116,6 +157,8 @@ export function verifyHandshake(
     chip: typeof payload.chip === 'string' ? payload.chip : undefined,
     hid: payload.hid,
     touchRoute: touch,
+    deviceTheme,
+    gestureMap,
     capacity: asCapacity(payload.capacity),
     capabilities,
     nativePlugins: asStringArray(payload.native_plugins ?? payload.nativePlugins),

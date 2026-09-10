@@ -144,6 +144,7 @@ export const ko = {
     sections: {
       appearance: '외관',
       layout: '레이아웃',
+      device: '디바이스',
       terminal: '터미널',
       session: '세션'
     },
@@ -169,6 +170,23 @@ export const ko = {
     floatingWindowHint: '현재 AI CLI 세션 상태를 항상 위에 표시',
     globalShortcut: '전역 단축키',
     globalShortcutHint: 'Ctrl+Alt+V로 창 표시/숨기기 전환',
+    device: '디바이스',
+    deviceConnected: '연결됨. 설정이 디바이스에 즉시 동기화됩니다',
+    deviceDisconnected: 'USB 디바이스를 선택하고 연결하세요',
+    connectDevice: '연결',
+    disconnectDevice: '연결 해제',
+    deviceWorking: '처리 중…',
+    deviceTheme: '디바이스 테마',
+    deviceThemeHint: '즉시 적용하고 디바이스에 저장합니다',
+    deviceThemeNames: { custom: '사용자 지정(현재)', ocean: '오션', midnight: '미드나이트', light: '라이트' },
+    swipeLeft: '터치패드 왼쪽 스와이프',
+    swipeRight: '터치패드 오른쪽 스와이프',
+    gestureHint: '카드 탐색 또는 컴퓨터 단축키에 매핑합니다',
+    gestureActionNames: {
+      card_next: '다음 카드', card_prev: '이전 카드', none: '동작 없음',
+      ctrl_c: 'Ctrl + C', ctrl_v: 'Ctrl + V', ctrl_x: 'Ctrl + X', ctrl_z: 'Ctrl + Z',
+      ctrl_shift_z: 'Ctrl + Shift + Z', alt_left: 'Alt + ←', alt_right: 'Alt + →'
+    },
     attentionPriority: '주의 우선 정렬',
     attentionPriorityHint: '새 활동이 있는 세션을 탐색 목록 맨 위로 이동합니다',
     terminalTheme: '터미널 색상',

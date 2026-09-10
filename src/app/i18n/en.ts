@@ -145,6 +145,7 @@ export const en = {
     sections: {
       appearance: 'Appearance',
       layout: 'Layout',
+      device: 'Device',
       terminal: 'Terminal',
       session: 'Sessions'
     },
@@ -170,6 +171,23 @@ export const en = {
     floatingWindowHint: 'Always-on-top status for current AI CLI sessions',
     globalShortcut: 'Global shortcut',
     globalShortcutHint: 'Ctrl+Alt+V toggles window visibility',
+    device: 'Device',
+    deviceConnected: 'Connected; changes sync to the device immediately',
+    deviceDisconnected: 'Select and connect a USB device to configure it',
+    connectDevice: 'Connect',
+    disconnectDevice: 'Disconnect',
+    deviceWorking: 'Working…',
+    deviceTheme: 'Device theme',
+    deviceThemeHint: 'Applied immediately and stored on the device',
+    deviceThemeNames: { custom: 'Custom (current)', ocean: 'Ocean', midnight: 'Midnight', light: 'Light' },
+    swipeLeft: 'Touchpad swipe left',
+    swipeRight: 'Touchpad swipe right',
+    gestureHint: 'Map to card navigation or a computer shortcut',
+    gestureActionNames: {
+      card_next: 'Next card', card_prev: 'Previous card', none: 'No action',
+      ctrl_c: 'Ctrl + C', ctrl_v: 'Ctrl + V', ctrl_x: 'Ctrl + X', ctrl_z: 'Ctrl + Z',
+      ctrl_shift_z: 'Ctrl + Shift + Z', alt_left: 'Alt + ←', alt_right: 'Alt + →'
+    },
     attentionPriority: 'Attention-first sorting',
     attentionPriorityHint: 'Move sessions with new activity to the top of navigation',
     terminalTheme: 'Terminal palette',

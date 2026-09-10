@@ -68,9 +68,11 @@ import {
   DeviceEventChannel,
   DeviceInvokeChannel,
   type DeviceApi,
+  type DeviceGestureAction,
   type DeviceInfo,
   type DeviceLogEvent,
   type DeviceProgressEvent,
+  type DeviceTheme,
   type DeviceWriteFileRequest
 } from '../shared/device-ipc'
 
@@ -425,6 +427,13 @@ const deviceApi: DeviceApi = {
     ipcRenderer.invoke(DeviceInvokeChannel.SaveAndRun, req),
   setTouchRoute: (deviceId, route) =>
     ipcRenderer.invoke(DeviceInvokeChannel.TouchRoute, deviceId, route),
+  setDeviceTheme: (deviceId: string, theme: DeviceTheme) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.DeviceTheme, deviceId, theme),
+  setGestureMap: (
+    deviceId: string,
+    left: DeviceGestureAction,
+    right: DeviceGestureAction
+  ) => ipcRenderer.invoke(DeviceInvokeChannel.GestureMap, deviceId, left, right),
   onChanged: (cb) => {
     const handler = (_e: IpcRendererEvent, devices: DeviceInfo[]): void => cb(devices)
     ipcRenderer.on(DeviceEventChannel.Changed, handler)

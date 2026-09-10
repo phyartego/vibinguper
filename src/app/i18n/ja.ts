@@ -144,6 +144,7 @@ export const ja = {
     sections: {
       appearance: '外観',
       layout: 'レイアウト',
+      device: 'デバイス',
       terminal: 'ターミナル',
       session: 'セッション'
     },
@@ -169,6 +170,23 @@ export const ja = {
     floatingWindowHint: 'AI CLI セッションの状態を常に手前に表示',
     globalShortcut: 'グローバルショートカット',
     globalShortcutHint: 'Ctrl+Alt+V でウィンドウの表示 / 非表示を切替',
+    device: 'デバイス',
+    deviceConnected: '接続済み。設定はデバイスへ即時同期されます',
+    deviceDisconnected: 'USB デバイスを選択して接続してください',
+    connectDevice: '接続',
+    disconnectDevice: '切断',
+    deviceWorking: '処理中…',
+    deviceTheme: 'デバイステーマ',
+    deviceThemeHint: 'デバイスへ即時適用して保存します',
+    deviceThemeNames: { custom: 'カスタム（現在）', ocean: 'オーシャン', midnight: 'ミッドナイト', light: 'ライト' },
+    swipeLeft: 'タッチパッド左スワイプ',
+    swipeRight: 'タッチパッド右スワイプ',
+    gestureHint: 'カード操作または PC ショートカットに割り当てます',
+    gestureActionNames: {
+      card_next: '次のカード', card_prev: '前のカード', none: '何もしない',
+      ctrl_c: 'Ctrl + C', ctrl_v: 'Ctrl + V', ctrl_x: 'Ctrl + X', ctrl_z: 'Ctrl + Z',
+      ctrl_shift_z: 'Ctrl + Shift + Z', alt_left: 'Alt + ←', alt_right: 'Alt + →'
+    },
     attentionPriority: '注意優先で並べ替え',
     attentionPriorityHint: 'オンにすると、新しい動きがあるセッションをナビゲーションの先頭へ移動します',
     terminalTheme: 'ターミナル配色',

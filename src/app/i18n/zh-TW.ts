@@ -144,6 +144,7 @@ export const zhTW = {
     sections: {
       appearance: '外觀',
       layout: '版面',
+      device: '下位機',
       terminal: '終端機',
       session: '工作階段'
     },
@@ -169,6 +170,23 @@ export const zhTW = {
     floatingWindowHint: '獨立置頂顯示目前 AI CLI 工作階段狀態',
     globalShortcut: '全域快速鍵',
     globalShortcutHint: 'Ctrl+Alt+V 切換視窗顯示 / 隱藏',
+    device: '裝置',
+    deviceConnected: '已連線，設定會立即同步至下位機',
+    deviceDisconnected: '選擇 USB 裝置並連線後即可設定',
+    connectDevice: '連線',
+    disconnectDevice: '中斷',
+    deviceWorking: '處理中…',
+    deviceTheme: '下位機主題',
+    deviceThemeHint: '立即套用並儲存於下位機',
+    deviceThemeNames: { custom: '自訂（目前）', ocean: '海洋藍', midnight: '午夜黑', light: '淺色' },
+    swipeLeft: '觸控板左滑',
+    swipeRight: '觸控板右滑',
+    gestureHint: '映射為卡片操作或電腦快捷鍵',
+    gestureActionNames: {
+      card_next: '下一張卡片', card_prev: '上一張卡片', none: '無動作',
+      ctrl_c: 'Ctrl + C', ctrl_v: 'Ctrl + V', ctrl_x: 'Ctrl + X', ctrl_z: 'Ctrl + Z',
+      ctrl_shift_z: 'Ctrl + Shift + Z', alt_left: 'Alt + ←', alt_right: 'Alt + →'
+    },
     attentionPriority: '注意力優先排序',
     attentionPriorityHint: '開啟後，有新活動的工作階段會移到導覽列表頂部',
     terminalTheme: '終端機配色',
