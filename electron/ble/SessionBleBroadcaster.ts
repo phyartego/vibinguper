@@ -61,6 +61,8 @@ export class SessionBleBroadcaster {
   private chunkBytes = BLE_FLOAT_DEFAULT_MAX_WRITE_SIZE - BLE_FRAGMENT_HEADER_SIZE
   private pushTimer: ReturnType<typeof setTimeout> | null = null
   private disposed = false
+  private lastFocusId = ''
+  private lastFocusAt = 0
 
   constructor(private readonly deps: SessionBleBroadcasterDeps) {}
 
@@ -93,13 +95,18 @@ export class SessionBleBroadcaster {
   }
 
   /**
-   * 设备 FocusCmd 回传的短 id → 复用 focus-session 聚焦对应终端。
-   * 短 id 查不到（过期/伪造）时静默忽略。
+   * 设备 FocusCmd 或 USB SESSION_FOCUS 的短 id → 复用 focus-session 聚焦对应终端。
+   * 短 id 查不到（过期/伪造/已关闭）时静默忽略。
+   * 500ms 内同一短 id 只聚焦一次，避免 USB 与 BLE 各送一帧时切两次。
    */
   handleFocus(shortId: string): void {
-    if (this.disposed) return
+    if (this.disposed || !shortId) return
+    const now = Date.now()
+    if (shortId === this.lastFocusId && now - this.lastFocusAt < 500) return
     const entry = this.shortIdMap.get(shortId)
     if (!entry) return
+    this.lastFocusId = shortId
+    this.lastFocusAt = now
     this.deps.focusSession(entry.sessionId)
   }
 

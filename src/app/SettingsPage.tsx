@@ -26,6 +26,8 @@ const gestureActionIds: readonly DeviceGestureAction[] = [
   'card_next', 'card_prev', 'none', 'ctrl_c', 'ctrl_v', 'ctrl_x', 'ctrl_z',
   'ctrl_shift_z', 'alt_left', 'alt_right'
 ]
+// 未握手到 haptic_intensity 时的滑条摆位；数值侧显示 '--'，不要瞎填成 0。
+const HAPTIC_NEUTRAL = 50
 
 interface SettingsPageProps {
   shells: readonly ShellOption[]
@@ -52,6 +54,13 @@ export default function SettingsPage({
   const [deviceRefreshing, setDeviceRefreshing] = useState(false)
   const deviceBusyRef = useRef(false)
   const [deviceError, setDeviceError] = useState<string | null>(null)
+  // 震动强度滑条：拖动期间用本地草稿驱动，SET 串行 + 合并，绝不用 deviceBusy 包住每次 input。
+  const [hapticDraft, setHapticDraft] = useState<number | null>(null)
+  const hapticSendingRef = useRef(false)
+  const hapticPendingRef = useRef<number | null>(null)
+  const hapticSentRef = useRef<number | null>(null)
+  const [calibrateBusy, setCalibrateBusy] = useState(false)
+  const calibrateBusyRef = useRef(false)
   // 主题热重载后注册表版本自增，订阅以重新读取当前注册表。
   useThemeRegistryVersion((state) => state.version)
   const registry = getUiThemeRegistry()
@@ -105,6 +114,25 @@ export default function SettingsPage({
     : device.capabilities?.includes('gesture_map')
       ? strings.settings.gestureHint
       : strings.settings.deviceUnsupported
+  const hapticCapability = device?.capabilities?.includes('haptic_intensity') ?? false
+  const hapticEnabled = device?.connected === true && hapticCapability
+  // 设备是权威来源：只在握手回报后展示数值；未知时显示 '--' 而不是 0。
+  const hapticDeviceValue =
+    typeof device?.hapticIntensity === 'number' ? Math.round(device.hapticIntensity) : null
+  const hapticValue = hapticDraft ?? hapticDeviceValue
+  const hapticHint = !device?.connected
+    ? strings.settings.deviceNeedConnect
+    : hapticCapability
+      ? strings.settings.hapticIntensityHint
+      : strings.settings.deviceUnsupported
+  const calibrateCapability = device?.capabilities?.includes('haptic_calibrate') ?? false
+  const calibrateEnabled =
+    device?.connected === true && calibrateCapability && !calibrateBusy && !deviceBusy
+  const calibrateHint = !device?.connected
+    ? strings.settings.deviceNeedConnect
+    : calibrateCapability
+      ? strings.settings.hapticCalibrateHint
+      : strings.settings.deviceUnsupported
 
   // 列表更新后尽量保留当前选择；当前设备消失时回退到已连接设备或第一台。
   const applyDeviceList = useCallback((next: DeviceInfo[]): void => {
@@ -131,6 +159,15 @@ export default function SettingsPage({
       unsubscribe()
     }
   }, [applyDeviceList])
+
+  // 切换设备或（重）连后以 DEVICE_INFO 为准刷新滑条，丢弃上一轮会话的本地草稿与在途状态。
+  useEffect(() => {
+    setHapticDraft(null)
+    hapticPendingRef.current = null
+    hapticSentRef.current = null
+    calibrateBusyRef.current = false
+    setCalibrateBusy(false)
+  }, [deviceId, device?.connected])
 
   // 空态下的手动重扫：仅再次 list()，不触碰连接状态机。
   const refreshDevices = (): void => {
@@ -225,6 +262,69 @@ export default function SettingsPage({
     }
   }
 
+  // 震动强度写入：串行 + 合并。先入队再 drain；在途时只覆盖最新待写值，
+  // 拖动全程不占 deviceBusy、滑条不被禁用。
+  const pushHapticIntensity = (value: number): void => {
+    if (!device?.connected) return
+    const id = device.id
+    hapticPendingRef.current = value
+    if (hapticSendingRef.current) return
+    hapticSendingRef.current = true
+    const drain = async (): Promise<void> => {
+      try {
+        for (;;) {
+          const latest = hapticPendingRef.current
+          if (latest === null) return
+          hapticPendingRef.current = null
+          if (latest === hapticSentRef.current) continue
+          hapticSentRef.current = latest
+          try {
+            await window.deviceApi.setHapticIntensity(id, latest)
+          } catch (error) {
+            hapticPendingRef.current = null
+            hapticSentRef.current = null
+            setHapticDraft(null)
+            setDeviceError(error instanceof Error ? error.message : String(error))
+            return
+          }
+        }
+      } finally {
+        hapticSendingRef.current = false
+        if (hapticPendingRef.current !== null) pushHapticIntensity(hapticPendingRef.current)
+      }
+    }
+    void drain()
+  }
+
+  const changeHapticIntensity = (value: number): void => {
+    if (!hapticEnabled) return
+    const next = Math.min(100, Math.max(0, Math.round(value)))
+    setHapticDraft(next)
+    pushHapticIntensity(next)
+  }
+
+  // change / pointerup / keyup 收尾：确保最后一帧一定发出（合并只丢中间过程值）。
+  const commitHapticIntensity = (): void => {
+    if (hapticDraft !== null) pushHapticIntensity(hapticDraft)
+  }
+
+  // 触发闭环马达校准：防重入，校准期间按钮 busy，失败写回 deviceIssues，成功清除旧错误。
+  const handleCalibrateHaptic = async (): Promise<void> => {
+    if (!device?.connected || !calibrateCapability || calibrateBusyRef.current || deviceBusy) return
+    calibrateBusyRef.current = true
+    setCalibrateBusy(true)
+    setDeviceError(null)
+    try {
+      await window.deviceApi.calibrateHaptic(device.id)
+      setDeviceError(null)
+    } catch (error) {
+      setDeviceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      calibrateBusyRef.current = false
+      setCalibrateBusy(false)
+    }
+  }
+
   return (
     <ClickSpark sparkColor="var(--vib-accent-spark)" sparkSize={8} sparkRadius={18} sparkCount={10} duration={450}>
       <section data-testid="settings-page" className="sidebar-scroll h-full overflow-y-auto">
@@ -284,6 +384,41 @@ export default function SettingsPage({
             </Row>
             <Row label={strings.settings.swipeRight} hint={deviceRowGestureHint}>
               <Dropdown testId="settings-gesture-right" value={device?.gestureMap?.right ?? 'card_prev'} disabled={deviceBusy || !device?.connected || !device.capabilities?.includes('gesture_map')} options={gestureOptions} onChange={(value) => void changeGesture('right', value)} />
+            </Row>
+            <Row label={strings.settings.hapticIntensity} hint={hapticHint}>
+              <div className="flex items-center gap-2">
+                <input
+                  data-testid="settings-haptic-intensity"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={hapticValue ?? HAPTIC_NEUTRAL}
+                  disabled={!hapticEnabled}
+                  aria-label={strings.settings.hapticIntensity}
+                  onChange={(event) => changeHapticIntensity(Number(event.target.value))}
+                  onPointerUp={commitHapticIntensity}
+                  onKeyUp={commitHapticIntensity}
+                  onBlur={commitHapticIntensity}
+                  className="w-[120px] cursor-target accent-button-primary disabled:cursor-not-allowed disabled:opacity-55"
+                />
+                <span data-testid="settings-haptic-intensity-value" className="w-10 text-right font-maple text-[12px] text-text-secondary">
+                  {hapticValue === null ? '--' : `${hapticValue}%`}
+                </span>
+              </div>
+            </Row>
+            <Row label={strings.settings.hapticCalibrate} hint={calibrateHint}>
+              <button
+                type="button"
+                data-testid="settings-haptic-calibrate"
+                disabled={!calibrateEnabled}
+                aria-busy={calibrateBusy}
+                onClick={() => void handleCalibrateHaptic()}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-input px-2.5 py-1.5 font-pingfang text-[11px] font-medium text-text-muted transition-colors hover:bg-input-hover hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-55"
+              >
+                {calibrateBusy && <RefreshCw className="size-3 animate-spin" strokeWidth={1.75} />}
+                {strings.settings.hapticCalibrateButton}
+              </button>
             </Row>
             {deviceIssues.length > 0 && (
               <div data-testid="settings-device-error" className="flex flex-col gap-1 border-b border-border-faint py-2">

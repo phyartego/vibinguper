@@ -192,6 +192,11 @@ export const ko = {
       ctrl_c: 'Ctrl + C', ctrl_v: 'Ctrl + V', ctrl_x: 'Ctrl + X', ctrl_z: 'Ctrl + Z',
       ctrl_shift_z: 'Ctrl + Shift + Z', alt_left: 'Alt + ←', alt_right: 'Alt + →'
     },
+    hapticIntensity: '터치패드 진동 강도',
+    hapticIntensityHint: '즉시 기기에 기록하고 저장합니다. 0으로 진동 끄기',
+    hapticCalibrate: '모터 보정',
+    hapticCalibrateButton: '모터 보정',
+    hapticCalibrateHint: '폐루프 공진 보정을 위해 약 0.3~1초 동안 진동합니다',
     attentionPriority: '주의 우선 정렬',
     attentionPriorityHint: '새 활동이 있는 세션을 탐색 목록 맨 위로 이동합니다',
     terminalTheme: '터미널 색상',

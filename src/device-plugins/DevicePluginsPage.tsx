@@ -86,6 +86,7 @@ export default function DevicePluginsPage() {
     value: ''
   })
   const uploadRef = useRef<HTMLInputElement>(null)
+  const unsavedPlugins = useRef<Set<string>>(new Set())
   const saveRef = useRef<(run: boolean, generationOverride?: number) => Promise<void>>(
     async () => undefined
   )
@@ -199,7 +200,7 @@ export default function DevicePluginsPage() {
     setError(null)
     setConflict(null)
     const row = plugins.find((p) => p.id === id)
-    if (isNativePlugin(row ?? { id })) {
+    if (isNativePlugin(row ?? { id }) || unsavedPlugins.current.has(id)) {
       setTree([])
       return
     }
@@ -311,6 +312,7 @@ export default function DevicePluginsPage() {
         run
       })
       setDirty({})
+      unsavedPlugins.current.delete(plugin)
       setConflict(null)
       if (typeof result?.generation === 'number') {
         setPlugins((prev) =>
@@ -348,11 +350,60 @@ export default function DevicePluginsPage() {
 
   saveRef.current = save
 
+  const createPlugin = (): void => {
+    if (!deviceId) return
+    const id = window.prompt('插件 id（小写字母、数字、下划线，1-15）')
+    if (id === null) return
+    const name = id.trim()
+    if (!/^[a-z0-9_]{1,15}$/.test(name)) {
+      setError('插件 id 只能是小写字母、数字和下划线，长度 1-15')
+      return
+    }
+    if (plugins.some((p) => p.id === name)) {
+      setError('该插件已存在')
+      return
+    }
+    const starter = [
+      'def vibing_start(config):',
+      '    vibing.confirm()',
+      '    vibing.log("started")',
+      '    return 0',
+      '',
+      'def vibing_stop():',
+      '    return 0',
+      ''
+    ].join('\n')
+    setPlugin(name)
+    setTree([])
+    setOpen({ path: 'main.py', kind: 'text', text: starter })
+    setDirty({ 'main.py': { path: 'main.py', kind: 'text', text: starter } })
+    setPlugins((prev) => [
+      ...prev,
+      { id: name, kind: 'user', enable: false, running: false, native: false, generation: 0 }
+    ])
+    unsavedPlugins.current.add(name)
+    setError(null)
+  }
+
+  const setEnabled = async (enable: boolean): Promise<void> => {
+    if (!deviceId || !plugin || native || readonly) return
+    setError(null)
+    setBusy(true)
+    try {
+      await window.deviceApi.setPluginEnabled(deviceId, plugin, enable)
+      await loadPlugins(deviceId)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   useEffect(() => {
     const onKey = (ev: KeyboardEvent): void => {
       if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') {
         ev.preventDefault()
-        void saveRef.current(false)
+        void saveRef.current(ev.shiftKey)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -517,7 +568,18 @@ export default function DevicePluginsPage() {
           <div>运行：{pluginRow?.running ? '是' : '否'}</div>
           <div className="truncate text-status-error">错误：{error ?? device?.lastError ?? '无'}</div>
         </div>
-        <div className="mt-4 text-xs text-text-muted">插件</div>
+        <div className="mt-4 flex items-center gap-2 text-xs text-text-muted">
+          <span>插件</span>
+          <button
+            type="button"
+            title="新建插件"
+            disabled={!deviceId || busy}
+            onClick={createPlugin}
+            className="ml-auto rounded p-1 hover:bg-surface-hover disabled:opacity-40"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        </div>
         <div className="mt-1 min-h-0 flex-1 overflow-y-auto">
           {plugins.map((p) => (
             <button
@@ -532,6 +594,7 @@ export default function DevicePluginsPage() {
               <span className="truncate">{p.id}</span>
               {p.native ? <span className="text-text-faint">固件</span> : null}
               {isExamplesPlugin(p.id) ? <span className="text-text-faint">只读</span> : null}
+              {p.enable === false && !p.native ? <span className="text-text-faint">停用</span> : null}
               {p.running ? <span className="text-status-done">●</span> : null}
             </button>
           ))}
@@ -554,6 +617,7 @@ export default function DevicePluginsPage() {
               <button
                 type="button"
                 data-testid="device-save"
+                title="保存（Ctrl+S）：写入新版本，不停止当前脚本，也不开始 20 秒试运行"
                 disabled={busy}
                 onClick={() => void save(false)}
                 className="ml-auto flex items-center gap-1 rounded-lg bg-surface-strong px-2 py-1"
@@ -563,11 +627,22 @@ export default function DevicePluginsPage() {
               <button
                 type="button"
                 data-testid="device-save-run"
+                title="保存并运行（Ctrl+Shift+S）：停掉旧实例并试运行，约 20 秒内须调用 vibing.confirm()"
                 disabled={busy}
                 onClick={() => void save(true)}
                 className="flex items-center gap-1 rounded-lg bg-surface-strong px-2 py-1"
               >
                 <Save className="size-3.5" /> 保存并运行
+              </button>
+              <button
+                type="button"
+                data-testid="device-plugin-enable"
+                title={pluginRow?.enable === false ? '启用并开机自动运行' : '停用，重启后不再自动运行'}
+                disabled={busy}
+                onClick={() => void setEnabled(pluginRow?.enable === false)}
+                className="flex items-center gap-1 rounded-lg bg-surface-strong px-2 py-1"
+              >
+                {pluginRow?.enable === false ? '启用' : '停用'}
               </button>
             </>
           )}
@@ -584,6 +659,11 @@ export default function DevicePluginsPage() {
             <option value="usb_touchpad">usb_touchpad</option>
           </select>
         </div>
+        {!native && !readonly && plugin ? (
+          <div className="border-b border-border-subtle px-3 py-1 text-[10px] text-text-faint">
+            保存（Ctrl+S）只写入新版本，不停止正在运行的脚本，也不开始 20 秒试运行。保存并运行（Ctrl+Shift+S）会停掉旧实例并试运行；脚本须在约 20 秒内调用 vibing.confirm()，否则回滚到上一已确认版本。
+          </div>
+        ) : null}
         {(busy || progress) && (
           <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-1 text-[10px]" data-testid="device-progress">
             <div className="h-1.5 flex-1 overflow-hidden rounded bg-surface-strong">

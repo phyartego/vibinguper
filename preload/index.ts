@@ -427,6 +427,8 @@ const deviceApi: DeviceApi = {
     ipcRenderer.invoke(DeviceInvokeChannel.SaveAndRun, req),
   setTouchRoute: (deviceId, route) =>
     ipcRenderer.invoke(DeviceInvokeChannel.TouchRoute, deviceId, route),
+  setPluginEnabled: (deviceId, plugin, enable) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.PluginEnable, deviceId, plugin, enable),
   setDeviceTheme: (deviceId: string, theme: DeviceTheme) =>
     ipcRenderer.invoke(DeviceInvokeChannel.DeviceTheme, deviceId, theme),
   setGestureMap: (
@@ -434,6 +436,10 @@ const deviceApi: DeviceApi = {
     left: DeviceGestureAction,
     right: DeviceGestureAction
   ) => ipcRenderer.invoke(DeviceInvokeChannel.GestureMap, deviceId, left, right),
+  setHapticIntensity: (deviceId: string, intensity: number) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.HapticIntensity, deviceId, intensity),
+  calibrateHaptic: (deviceId: string) =>
+    ipcRenderer.invoke(DeviceInvokeChannel.HapticCalibrate, deviceId),
   onChanged: (cb) => {
     const handler = (_e: IpcRendererEvent, devices: DeviceInfo[]): void => cb(devices)
     ipcRenderer.on(DeviceEventChannel.Changed, handler)

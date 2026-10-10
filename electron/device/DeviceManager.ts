@@ -36,7 +36,7 @@ import {
   type FileListItem,
   type FileTreeNode
 } from '../../shared/plugin-files'
-import { HandshakeError, verifyHandshake } from './handshake'
+import { HandshakeError, parseHapticIntensity, verifyHandshake } from './handshake'
 
 export class DeviceRpcError extends Error {
   readonly err: number
@@ -97,6 +97,12 @@ export type DeviceManagerDeps = {
   txnTimeoutMs?: number
   maxRetries?: number
   pollMs?: number
+  /** 轮询发现唯一匹配设备时自动握手；手动连接/断开始终可用。默认开。 */
+  autoConnect?: boolean
+  /** 自动连失败后的首轮冷却，按 2^(n-1) 指数退避。 */
+  autoConnectBackoffMs?: number
+  /** 退避上限：cdc_rpc 在 PSRAM 栈上跑 FATFS 可能崩，不能每轮 polling 硬撞。 */
+  autoConnectMaxBackoffMs?: number
 }
 
 const CHUNK = 1000
@@ -230,12 +236,27 @@ export class DeviceManager extends EventEmitter {
   private readonly frameTimeoutMs: number
   private readonly txnTimeoutMs: number
   private readonly maxRetries: number
+  private readonly autoConnectEnabled: boolean
+  private readonly autoConnectBackoffMs: number
+  private readonly autoConnectMaxBackoffMs: number
+  /** 用户手动断开的端口：在它从枚举中消失（或被再次手动连接）之前不自动回连。 */
+  private readonly manualSkip = new Set<string>()
+  /** 自动连失败退避：id -> 最早可重试时刻 / 连败次数。 */
+  private readonly autoRetryAt = new Map<string, number>()
+  private readonly autoAttempts = new Map<string, number>()
+  /** 同一端口并发 connect 共享同一次握手，避免自动连与手动连各开一个端口。 */
+  private readonly connecting = new Map<string, Promise<DeviceInfo>>()
+  private autoBusy = false
+  private autoNotice = ''
 
   constructor(private readonly deps: DeviceManagerDeps = {}) {
     super()
     this.frameTimeoutMs = deps.frameTimeoutMs ?? 5000
     this.txnTimeoutMs = deps.txnTimeoutMs ?? 60_000
     this.maxRetries = deps.maxRetries ?? 3
+    this.autoConnectEnabled = deps.autoConnect ?? true
+    this.autoConnectBackoffMs = deps.autoConnectBackoffMs ?? 10_000
+    this.autoConnectMaxBackoffMs = deps.autoConnectMaxBackoffMs ?? 120_000
   }
 
   startPolling(ms = this.deps.pollMs ?? 2000): void {
@@ -258,8 +279,12 @@ export class DeviceManager extends EventEmitter {
     this.stopPolling()
     const ids = [...this.sessions.keys()]
     for (const id of ids) {
-      await this.disconnect(id).catch(() => undefined)
+      await this.teardown(id).catch(() => undefined)
     }
+    this.manualSkip.clear()
+    this.autoRetryAt.clear()
+    this.autoAttempts.clear()
+    this.autoNotice = ''
   }
 
   private async binding(): Promise<SerialBinding> {
@@ -299,22 +324,62 @@ export class DeviceManager extends EventEmitter {
     for (const [id, info] of this.devices) {
       if (!seen.has(id) && !seen.has(info.serial)) {
         if (info.connected) {
-          await this.disconnect(id).catch(() => undefined)
+          await this.teardown(id).catch(() => undefined)
         }
         this.devices.delete(id)
+        // 拔出即解除手动断开的抑制：同一设备重新插入时恢复自动连资格。
+        this.manualSkip.delete(id)
       }
     }
     const list = [...this.devices.values()]
     this.emit('changed', list)
+    this.pumpAutoConnect()
     return list
   }
 
+  /**
+   * 手动与自动连共用的入口。同端口的并发调用共享同一次握手；无论谁触发，
+   * 失败都会记入自动连退避（手动重试不受退避限制，但轮询不会跟着硬撞）。
+   */
   async connect(id: string): Promise<DeviceInfo> {
+    const inflight = this.connecting.get(id)
+    if (inflight) return inflight
+    // 再次手动连接即视为解除手动断开的抑制。
+    this.manualSkip.delete(id)
+    const attempt = this.performConnect(id).then(
+      (info) => {
+        this.autoRetryAt.delete(id)
+        this.autoAttempts.delete(id)
+        return info
+      },
+      (error: unknown) => {
+        this.noteAutoConnectFailure(id)
+        throw error
+      }
+    )
+    const tracked = attempt.finally(() => {
+      if (this.connecting.get(id) === tracked) this.connecting.delete(id)
+    })
+    this.connecting.set(id, tracked)
+    return tracked
+  }
+
+  private noteAutoConnectFailure(id: string): void {
+    const attempts = (this.autoAttempts.get(id) ?? 0) + 1
+    this.autoAttempts.set(id, attempts)
+    const backoff = Math.min(
+      this.autoConnectBackoffMs * 2 ** (attempts - 1),
+      this.autoConnectMaxBackoffMs
+    )
+    this.autoRetryAt.set(id, Date.now() + backoff)
+  }
+
+  private async performConnect(id: string): Promise<DeviceInfo> {
     await this.list()
     const info = this.devices.get(id)
     if (!info) throw new Error('device not found')
     if (this.sessions.has(id)) {
-      await this.disconnect(id)
+      await this.teardown(id)
     }
     const binding = await this.binding()
     const port = await binding.open(info.path, 115200)
@@ -328,7 +393,7 @@ export class DeviceManager extends EventEmitter {
     port.onError((err) => {
       info.lastError = err.message
       info.connected = false
-      void this.disconnect(id).catch(() => undefined)
+      void this.teardown(id).catch(() => undefined)
     })
     port.onClose(() => {
       if (this.sessions.get(id)?.port === port) {
@@ -349,6 +414,8 @@ export class DeviceManager extends EventEmitter {
       info.touchRoute = verified.touchRoute
       info.deviceTheme = verified.deviceTheme
       info.gestureMap = verified.gestureMap
+      info.hapticIntensity = verified.hapticIntensity
+      info.hapticCalibrated = verified.hapticCalibrated
       info.capabilities = verified.capabilities
       info.serial = verified.serial
       info.lastError = undefined
@@ -369,7 +436,7 @@ export class DeviceManager extends EventEmitter {
       info.lastError = message
       info.connected = false
       info.protoCompatible = false
-      await this.disconnect(id).catch(() => undefined)
+      await this.teardown(id).catch(() => undefined)
       throw error
     }
   }
@@ -382,7 +449,17 @@ export class DeviceManager extends EventEmitter {
     return this.rpc(id, VB_CDC_CMD.SESSION_PUSH, snapshot)
   }
 
+  /** 用户手动断开：抑制该端口的自动回连，直到设备从枚举中消失或再次手动连接。 */
   async disconnect(id: string): Promise<void> {
+    this.manualSkip.add(id)
+    this.autoRetryAt.delete(id)
+    this.autoAttempts.delete(id)
+    this.autoNotice = ''
+    await this.teardown(id)
+  }
+
+  /** 内部拆除会话（设备消失/出错/重连），不改变自动连资格。 */
+  private async teardown(id: string): Promise<void> {
     const session = this.sessions.get(id)
     this.rejectPending(id, new Error('disconnected'))
     this.sessions.delete(id)
@@ -394,6 +471,58 @@ export class DeviceManager extends EventEmitter {
     const info = this.devices.get(id)
     if (info) info.connected = false
     this.emit('changed', [...this.devices.values()])
+  }
+
+  /**
+   * 自动连泵：每次枚举后触发。只在「恰有一台候选」时出手——
+   * 已有任一会话则不动，多台不猜（让用户在设置里选），手动断开与
+   * 退避中的端口跳过。握手可能打崩 cdc_rpc（PSRAM 栈上的 FATFS），
+   * 所以失败走指数退避而不是每轮 polling 硬撞。
+   */
+  private pumpAutoConnect(): void {
+    if (!this.autoConnectEnabled || this.autoBusy) return
+    if (this.connectedIds().length > 0) {
+      this.noticeAutoConnect('')
+      return
+    }
+    const now = Date.now()
+    const candidates = [...this.devices.values()].filter(
+      (info) =>
+        !info.connected &&
+        !this.manualSkip.has(info.id) &&
+        now >= (this.autoRetryAt.get(info.id) ?? 0)
+    )
+    if (candidates.length === 0) return
+    if (candidates.length > 1) {
+      this.noticeAutoConnect(`multi:${candidates.map((c) => c.id).sort().join(',')}`)
+      return
+    }
+    const target = candidates[0]!
+    this.autoBusy = true
+    void this.connect(target.id)
+      .then(() => this.noticeAutoConnect(''))
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error)
+        this.emit('log', {
+          deviceId: target.id,
+          line: `[auto-connect] failed: ${message}; backing off`
+        })
+      })
+      .finally(() => {
+        this.autoBusy = false
+      })
+  }
+
+  /** 自动连状态播报：相同状态只发一次日志，避免 polling 周期刷屏。 */
+  private noticeAutoConnect(key: string): void {
+    if (key === this.autoNotice) return
+    this.autoNotice = key
+    if (key.startsWith('multi:')) {
+      this.emit('log', {
+        deviceId: '',
+        line: '[auto-connect] multiple matching ports found; pick one in settings'
+      })
+    }
   }
 
   async abort(id: string): Promise<void> {
@@ -454,6 +583,11 @@ export class DeviceManager extends EventEmitter {
         message: typeof o.message === 'string' ? o.message : text
       }
       this.emit('progress', event)
+      return
+    }
+    if (frame.command === VB_CDC_EVT.SESSION_FOCUS) {
+      const o = asRecord(parseJson(frame))
+      if (typeof o.focus === 'string' && o.focus) this.emit('session-focus', o.focus)
       return
     }
     const log: DeviceLogEvent = { deviceId: id, line: text }
@@ -547,8 +681,13 @@ export class DeviceManager extends EventEmitter {
     })
   }
 
-  async rpc(id: string, command: number, payload: unknown = {}): Promise<unknown> {
-    const reply = await this.rpcFrame(id, command, jsonBytes(payload))
+  async rpc(
+    id: string,
+    command: number,
+    payload: unknown = {},
+    opts?: { retries?: number }
+  ): Promise<unknown> {
+    const reply = await this.rpcFrame(id, command, jsonBytes(payload), opts)
     return parseJson(reply)
   }
 
@@ -648,6 +787,10 @@ export class DeviceManager extends EventEmitter {
     })
   }
 
+  setPluginEnabled(id: string, plugin: string, enable: boolean): Promise<unknown> {
+    return this.rpc(id, VB_CDC_CMD.PLUGIN_ENABLE, { plugin, enable })
+  }
+
   setDeviceTheme(id: string, theme: DeviceTheme): Promise<void> {
     return this.rpc(id, VB_CDC_CMD.DEVICE_THEME_SET, { theme }).then(() => {
       const info = this.devices.get(id)
@@ -670,6 +813,40 @@ export class DeviceManager extends EventEmitter {
         this.emit('changed', [...this.devices.values()])
       }
     })
+  }
+
+  /**
+   * 写入触摸板震动马达强度（0-100，0 = 关闭）。非法值直接拒绝，不发 RPC。
+   * 设备是权威来源：ACK 回显有效时以回显为准，否则缓存请求值。
+   */
+  setHapticIntensity(id: string, intensity: number): Promise<void> {
+    if (!Number.isInteger(intensity) || intensity < 0 || intensity > 100) {
+      return Promise.reject(new Error('haptic intensity must be an integer in [0, 100]'))
+    }
+    return this.rpc(id, VB_CDC_CMD.HAPTIC_INTENSITY_SET, { haptic_intensity: intensity }).then(
+      (raw) => {
+        const echoed = parseHapticIntensity(asRecord(raw).haptic_intensity)
+        const info = this.devices.get(id)
+        if (info) {
+          info.hapticIntensity = echoed ?? intensity
+          this.emit('changed', [...this.devices.values()])
+        }
+      }
+    )
+  }
+
+  /**
+   * 触发下位机闭环马达校准。校准期间下位机会驱动马达震动约 0.3–1s 并测定谐振参数。
+   * 单次 round-trip 判定，不进行失败重试以避免马达连续震动。
+   */
+  async calibrateHaptic(id: string): Promise<void> {
+    const raw = await this.rpc(id, VB_CDC_CMD.HAPTIC_CALIBRATE, {}, { retries: 1 })
+    const res = asRecord(raw)
+    const info = this.devices.get(id)
+    if (info && (res.haptic_calibrated === true || typeof res.haptic_calibrated === 'boolean')) {
+      info.hapticCalibrated = Boolean(res.haptic_calibrated)
+      this.emit('changed', [...this.devices.values()])
+    }
   }
 
   mkdir(id: string, plugin: string, path: string, generation: number): Promise<unknown> {

@@ -192,6 +192,11 @@ export const zhTW = {
       ctrl_c: 'Ctrl + C', ctrl_v: 'Ctrl + V', ctrl_x: 'Ctrl + X', ctrl_z: 'Ctrl + Z',
       ctrl_shift_z: 'Ctrl + Shift + Z', alt_left: 'Alt + ←', alt_right: 'Alt + →'
     },
+    hapticIntensity: '觸控板震動強度',
+    hapticIntensityHint: '立即寫入並持久化至下位機；0 為關閉',
+    hapticCalibrate: '馬達校準',
+    hapticCalibrateButton: '校準馬達',
+    hapticCalibrateHint: '校準時將震動約 0.3–1 秒，用於閉環諧振校準',
     attentionPriority: '注意力優先排序',
     attentionPriorityHint: '開啟後，有新活動的工作階段會移到導覽列表頂部',
     terminalTheme: '終端機配色',

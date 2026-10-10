@@ -117,6 +117,9 @@ function vibingDevice(overrides?: {
   proto?: number
   serial?: string | null
   capabilities?: string[] | null
+  hapticIntensity?: number | null
+  hapticCalibrated?: boolean | null
+  calibrateErr?: number
   files?: Map<string, Uint8Array>
   dirs?: Map<string, Array<{ name: string; type: 'file' | 'dir'; size: number }>>
   activateErr?: number
@@ -133,6 +136,7 @@ function vibingDevice(overrides?: {
     ])
   files.set('assets/a.png', new Uint8Array([1, 2, 3, 4]))
   let readPath = 'main.py'
+  let hapticIntensity = overrides?.hapticIntensity ?? 60
   const port = new FakePort((frame) => {
     const body = jsonPayload(frame)
     switch (frame.command) {
@@ -145,12 +149,18 @@ function vibingDevice(overrides?: {
           touch_route: 'local_ui',
           device_theme: 'ocean',
           gesture_map: { left: 'card_next', right: 'card_prev' },
+          haptic_intensity: hapticIntensity,
           capacity: { total: 4096, used: 128, free: 3968 }
         }
         if (overrides?.serial !== null) payload.serial = overrides?.serial ?? 'VBTEST'
         if (overrides?.capabilities !== null) {
           payload.capabilities =
-            overrides?.capabilities ?? ['file', 'plugin', 'device_theme', 'gesture_map']
+            overrides?.capabilities ??
+            ['file', 'plugin', 'device_theme', 'gesture_map', 'haptic_intensity', 'haptic_calibrate']
+        }
+        if (overrides?.hapticIntensity === null) delete payload.haptic_intensity
+        if (overrides?.hapticCalibrated !== undefined && overrides?.hapticCalibrated !== null) {
+          payload.haptic_calibrated = overrides.hapticCalibrated
         }
         return reply(frame, payload)
       }
@@ -171,6 +181,24 @@ function vibingDevice(overrides?: {
       case VB_CDC_CMD.GESTURE_MAP_SET:
       case VB_CDC_CMD.SESSION_PUSH:
         return reply(frame, { ok: true })
+      case VB_CDC_CMD.HAPTIC_INTENSITY_SET: {
+        const raw = body.haptic_intensity
+        if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0 || raw > 100) {
+          return reply(frame, { err: VB_CDC_ERR.SYNTAX, message: 'invalid haptic_intensity' }, VB_CDC_F.NACK)
+        }
+        hapticIntensity = raw
+        return reply(frame, { ok: true, haptic_intensity: hapticIntensity })
+      }
+      case VB_CDC_CMD.HAPTIC_CALIBRATE: {
+        if (overrides?.calibrateErr !== undefined) {
+          return reply(
+            frame,
+            { err: overrides.calibrateErr, message: 'calibration failed' },
+            VB_CDC_F.NACK
+          )
+        }
+        return reply(frame, { ok: true, haptic_calibrated: true })
+      }
       case VB_CDC_CMD.CAPACITY:
         return reply(frame, { total: 4096, used: 128, free: 3968 })
       case VB_CDC_CMD.PLUGIN_LIST:
@@ -233,6 +261,8 @@ function vibingDevice(overrides?: {
       case VB_CDC_CMD.FILE_WRITE_CHUNK:
       case VB_CDC_CMD.FILE_WRITE_COMMIT:
       case VB_CDC_CMD.BUNDLE_VALIDATE:
+        return reply(frame, { ok: true })
+      case VB_CDC_CMD.PLUGIN_ENABLE:
         return reply(frame, { ok: true })
       case VB_CDC_CMD.BUNDLE_ACTIVATE:
         if (overrides?.activateErr) {
@@ -314,6 +344,62 @@ test('handshake rejects wrong proto, missing serial, missing cap', () => {
       capabilities: ['file', 'plugin'],
       gesture_map: { left: 42, right: null }
     }).gestureMap
+  ).toBeUndefined()
+  expect(
+    verifyHandshake('VBTEST', {
+      proto: 1,
+      serial: 'VBTEST',
+      capabilities: ['file', 'plugin'],
+      haptic_intensity: 0
+    }).hapticIntensity
+  ).toBe(0)
+  expect(
+    verifyHandshake('VBTEST', {
+      proto: 1,
+      serial: 'VBTEST',
+      capabilities: ['file', 'plugin'],
+      haptic_intensity: 100
+    }).hapticIntensity
+  ).toBe(100)
+  expect(
+    verifyHandshake('VBTEST', {
+      proto: 1,
+      serial: 'VBTEST',
+      capabilities: ['file', 'plugin'],
+      haptic_intensity: 101
+    }).hapticIntensity
+  ).toBeUndefined()
+  expect(
+    verifyHandshake('VBTEST', {
+      proto: 1,
+      serial: 'VBTEST',
+      capabilities: ['file', 'plugin'],
+      haptic_intensity: '80'
+    }).hapticIntensity
+  ).toBeUndefined()
+  expect(
+    verifyHandshake('VBTEST', {
+      proto: 1,
+      serial: 'VBTEST',
+      capabilities: ['file', 'plugin'],
+      haptic_calibrated: true
+    }).hapticCalibrated
+  ).toBe(true)
+  expect(
+    verifyHandshake('VBTEST', {
+      proto: 1,
+      serial: 'VBTEST',
+      capabilities: ['file', 'plugin'],
+      haptic_calibrated: false
+    }).hapticCalibrated
+  ).toBe(false)
+  expect(
+    verifyHandshake('VBTEST', {
+      proto: 1,
+      serial: 'VBTEST',
+      capabilities: ['file', 'plugin'],
+      haptic_calibrated: 1
+    }).hapticCalibrated
   ).toBeUndefined()
 })
 
@@ -421,6 +507,9 @@ test('DeviceManager handshake stores info and VID/PID is only a filter', async (
   expect(info.touchRoute).toBe('local_ui')
   expect(info.deviceTheme).toBe('ocean')
   expect(info.gestureMap).toEqual({ left: 'card_next', right: 'card_prev' })
+  expect(info.hapticIntensity).toBe(60)
+  expect(info.capabilities).toContain('haptic_intensity')
+  expect(info.capabilities).toContain('haptic_calibrate')
   await expect.poll(() => logs.join('\n')).toContain('boot ok')
   await mgr.dispose()
 })
@@ -461,6 +550,80 @@ test('device theme and gesture SET send payloads and emit changed cache', async 
     deviceTheme: 'midnight',
     gestureMap: { left: 'ctrl_c', right: 'ctrl_v' }
   })
+  await mgr.dispose()
+})
+
+test('haptic intensity SET sends payload, caches echo, and rejects out of range', async () => {
+  const { port } = vibingDevice({ hapticIntensity: 40 })
+  const mgr = new DeviceManager({ binding: makeBinding(port), frameTimeoutMs: 200 })
+  const changed: number[] = []
+  mgr.on('changed', (devices) => {
+    const info = devices.find((device) => device.id === 'VBTEST')
+    if (typeof info?.hapticIntensity === 'number') changed.push(info.hapticIntensity)
+  })
+  const info = await mgr.connect('VBTEST')
+  expect(info.hapticIntensity).toBe(40)
+  await mgr.setHapticIntensity('VBTEST', 0)
+  await mgr.setHapticIntensity('VBTEST', 100)
+  const sets = port.writes.filter((frame) => frame.command === VB_CDC_CMD.HAPTIC_INTENSITY_SET)
+  expect(sets.map((frame) => jsonPayload(frame))).toEqual([
+    { haptic_intensity: 0 },
+    { haptic_intensity: 100 }
+  ])
+  expect(changed.at(-1)).toBe(100)
+  await expect(mgr.setHapticIntensity('VBTEST', 101)).rejects.toThrow(/integer in \[0, 100\]/)
+  await expect(mgr.setHapticIntensity('VBTEST', 1.5)).rejects.toThrow(/integer in \[0, 100\]/)
+  expect(port.writes.filter((frame) => frame.command === VB_CDC_CMD.HAPTIC_INTENSITY_SET)).toHaveLength(2)
+  await mgr.dispose()
+})
+
+test('malformed DEVICE_INFO haptic_intensity is omitted without failing handshake', async () => {
+  const { port } = vibingDevice({ hapticIntensity: null })
+  const mgr = new DeviceManager({ binding: makeBinding(port), frameTimeoutMs: 200 })
+  const info = await mgr.connect('VBTEST')
+  expect(info.connected).toBe(true)
+  expect(info.hapticIntensity).toBeUndefined()
+  await mgr.dispose()
+})
+
+test('calibrateHaptic sends 0x0078, updates hapticCalibrated cache, and does not alter intensity', async () => {
+  const { port } = vibingDevice({ hapticIntensity: 75, hapticCalibrated: false })
+  const mgr = new DeviceManager({ binding: makeBinding(port), frameTimeoutMs: 200 })
+  const changed: boolean[] = []
+  mgr.on('changed', (devices) => {
+    const info = devices.find((device) => device.id === 'VBTEST')
+    if (typeof info?.hapticCalibrated === 'boolean') changed.push(info.hapticCalibrated)
+  })
+  const info = await mgr.connect('VBTEST')
+  expect(info.hapticCalibrated).toBe(false)
+  expect(info.hapticIntensity).toBe(75)
+
+  await mgr.calibrateHaptic('VBTEST')
+
+  const calFrames = port.writes.filter((frame) => frame.command === VB_CDC_CMD.HAPTIC_CALIBRATE)
+  expect(calFrames).toHaveLength(1)
+  expect(calFrames[0]?.command).toBe(0x0078)
+  expect(jsonPayload(calFrames[0]!)).toEqual({})
+  expect(info.hapticCalibrated).toBe(true)
+  expect(info.hapticIntensity).toBe(75)
+  expect(changed.at(-1)).toBe(true)
+  await mgr.dispose()
+})
+
+test('calibrateHaptic throws on NACK and does not retry multiple times', async () => {
+  const { port } = vibingDevice({ calibrateErr: VB_CDC_ERR.UNSUPPORTED })
+  const mgr = new DeviceManager({
+    binding: makeBinding(port),
+    frameTimeoutMs: 200,
+    maxRetries: 3
+  })
+  await mgr.connect('VBTEST')
+
+  await expect(mgr.calibrateHaptic('VBTEST')).rejects.toThrow('calibration failed')
+
+  // 校准必须 retries: 1，避免失败重试再次推马达
+  const calFrames = port.writes.filter((frame) => frame.command === VB_CDC_CMD.HAPTIC_CALIBRATE)
+  expect(calFrames).toHaveLength(1)
   await mgr.dispose()
 })
 
@@ -666,5 +829,112 @@ test('progress and log events are emitted', async () => {
   })
   expect(progress).toContain('txn_begin')
   expect(progress).toContain('progress')
+  await mgr.dispose()
+})
+
+const DEVICE_INFO_HITS = (port: FakePort): number =>
+  port.writes.filter((f) => f.command === VB_CDC_CMD.DEVICE_INFO).length
+
+test('startPolling auto-connects a single matching port', async () => {
+  const { port } = vibingDevice()
+  const mgr = new DeviceManager({ binding: makeBinding(port), frameTimeoutMs: 200 })
+  mgr.startPolling(20)
+  await expect.poll(() => mgr.connectedIds()).toEqual(['VBTEST'])
+  expect(DEVICE_INFO_HITS(port)).toBeGreaterThanOrEqual(1)
+  await mgr.dispose()
+})
+
+test('autoConnect can be disabled; manual connect still works', async () => {
+  const { port } = vibingDevice()
+  const mgr = new DeviceManager({
+    binding: makeBinding(port),
+    frameTimeoutMs: 200,
+    autoConnect: false
+  })
+  mgr.startPolling(20)
+  await new Promise((r) => setTimeout(r, 100))
+  expect(mgr.connectedIds()).toEqual([])
+  expect(DEVICE_INFO_HITS(port)).toBe(0)
+  const info = await mgr.connect('VBTEST')
+  expect(info.connected).toBe(true)
+  await mgr.dispose()
+})
+
+test('manual disconnect suppresses auto-connect until the port disappears and returns', async () => {
+  const { port } = vibingDevice()
+  const listed = [
+    { path: 'COM9', vendorId: '303A', productId: '1001', serialNumber: 'VBTEST' }
+  ]
+  const mgr = new DeviceManager({
+    binding: { list: async () => listed, open: async () => port },
+    frameTimeoutMs: 200
+  })
+  mgr.startPolling(20)
+  await expect.poll(() => mgr.connectedIds()).toEqual(['VBTEST'])
+  await mgr.disconnect('VBTEST')
+  // 设备仍在枚举里：多个 polling 周期内不得自动回连。
+  await new Promise((r) => setTimeout(r, 120))
+  expect(mgr.connectedIds()).toEqual([])
+  expect(DEVICE_INFO_HITS(port)).toBe(1)
+  // 拔出（从枚举消失）再插回：抑制解除，恢复自动连。
+  listed.length = 0
+  await new Promise((r) => setTimeout(r, 60))
+  listed.push({ path: 'COM9', vendorId: '303A', productId: '1001', serialNumber: 'VBTEST' })
+  await expect.poll(() => mgr.connectedIds(), { timeout: 2000 }).toEqual(['VBTEST'])
+  expect(DEVICE_INFO_HITS(port)).toBe(2)
+  await mgr.dispose()
+})
+
+test('two matching ports are never auto-connected; a manual pick leaves the other alone', async () => {
+  const { port: portA } = vibingDevice()
+  const { port: portB } = vibingDevice()
+  const mgr = new DeviceManager({
+    binding: {
+      list: async () => [
+        { path: 'COM9', vendorId: '303A', productId: '1001', serialNumber: 'VBAAA' },
+        { path: 'COM10', vendorId: '303A', productId: '1001', serialNumber: 'VBBB' }
+      ],
+      open: async (path) => (path === 'COM9' ? portA : portB)
+    },
+    frameTimeoutMs: 200
+  })
+  mgr.startPolling(20)
+  await new Promise((r) => setTimeout(r, 120))
+  expect(mgr.connectedIds()).toEqual([])
+  expect(DEVICE_INFO_HITS(portA)).toBe(0)
+  expect(DEVICE_INFO_HITS(portB)).toBe(0)
+  // 用户手动选一台后，另一台也保持未连（已有任一会话即不自动连）。
+  await mgr.connect('VBAAA')
+  expect(mgr.connectedIds()).toEqual(['VBAAA'])
+  await new Promise((r) => setTimeout(r, 60))
+  expect(DEVICE_INFO_HITS(portB)).toBe(0)
+  await mgr.dispose()
+})
+
+test('auto-connect backs off after handshake failures instead of retrying every poll', async () => {
+  const { port } = vibingDevice({ proto: 9 })
+  const mgr = new DeviceManager({
+    binding: makeBinding(port),
+    frameTimeoutMs: 200,
+    autoConnectBackoffMs: 400,
+    autoConnectMaxBackoffMs: 800
+  })
+  const autoFailures: string[] = []
+  mgr.on('log', (ev) => {
+    if (ev.line.startsWith('[auto-connect] failed')) autoFailures.push(ev.line)
+  })
+  mgr.startPolling(20)
+  await expect.poll(() => DEVICE_INFO_HITS(port)).toBeGreaterThanOrEqual(1)
+  const firstRound = DEVICE_INFO_HITS(port)
+  // 退避窗口内（400ms）跨多个 polling 周期：不得再撞设备。
+  await new Promise((r) => setTimeout(r, 150))
+  expect(DEVICE_INFO_HITS(port)).toBe(firstRound)
+  // 退避到期后允许下一次尝试，失败继续退避。
+  await expect
+    .poll(() => DEVICE_INFO_HITS(port), { timeout: 2500 })
+    .toBeGreaterThan(firstRound)
+  const listed = await mgr.list()
+  expect(listed[0]?.lastError).toBeTruthy()
+  expect(autoFailures.length).toBeGreaterThanOrEqual(1)
   await mgr.dispose()
 })

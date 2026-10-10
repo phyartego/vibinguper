@@ -192,6 +192,11 @@ export const ja = {
       ctrl_c: 'Ctrl + C', ctrl_v: 'Ctrl + V', ctrl_x: 'Ctrl + X', ctrl_z: 'Ctrl + Z',
       ctrl_shift_z: 'Ctrl + Shift + Z', alt_left: 'Alt + ←', alt_right: 'Alt + →'
     },
+    hapticIntensity: 'タッチパッドの振動の強さ',
+    hapticIntensityHint: 'デバイスへ即時書き込みして保存します。0 で振動オフ',
+    hapticCalibrate: 'モーター校正',
+    hapticCalibrateButton: 'モーター校正',
+    hapticCalibrateHint: '閉ループ共振校正のため約 0.3〜1 秒間振動します',
     attentionPriority: '注意優先で並べ替え',
     attentionPriorityHint: 'オンにすると、新しい動きがあるセッションをナビゲーションの先頭へ移動します',
     terminalTheme: 'ターミナル配色',

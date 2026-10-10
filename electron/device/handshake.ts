@@ -29,6 +29,8 @@ export type VerifiedDeviceInfo = {
   touchRoute?: 'local_ui' | 'usb_touchpad'
   deviceTheme?: DeviceThemeStatus
   gestureMap?: DeviceGestureMap
+  hapticIntensity?: number
+  hapticCalibrated?: boolean
   capacity?: DeviceCapacity
   capabilities: string[]
   nativePlugins: string[]
@@ -125,6 +127,26 @@ export function parseGestureMap(raw: unknown): DeviceGestureMap | undefined {
   return { left: left ?? 'none', right: right ?? 'none' }
 }
 
+/**
+ * Parse the optional DEVICE_INFO haptic intensity (0-100, 0 = off). Only a
+ * finite number inside the contract range is adopted; anything else is
+ * omitted so a malformed field never fails the whole handshake. The raw
+ * value is kept as-is: the device is the authority and the UI rounds for
+ * its slider, SET writes integers only.
+ */
+export function parseHapticIntensity(raw: unknown): number | undefined {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return undefined
+  return raw >= 0 && raw <= 100 ? raw : undefined
+}
+
+/**
+ * Parse the optional DEVICE_INFO haptic calibrated flag. Only a strict
+ * boolean is adopted so unexpected shapes are ignored safely.
+ */
+export function parseHapticCalibrated(raw: unknown): boolean | undefined {
+  return typeof raw === 'boolean' ? raw : undefined
+}
+
 export function verifyHandshake(
   usbSerial: string,
   payload: Record<string, unknown>
@@ -165,6 +187,12 @@ export function verifyHandshake(
         : undefined
   const deviceTheme = parseDeviceTheme(payload.device_theme ?? payload.deviceTheme)
   const gestureMap = parseGestureMap(payload.gesture_map ?? payload.gestureMap)
+  const hapticIntensity = parseHapticIntensity(
+    payload.haptic_intensity ?? payload.hapticIntensity
+  )
+  const hapticCalibrated = parseHapticCalibrated(
+    payload.haptic_calibrated ?? payload.hapticCalibrated
+  )
   const fwVersion =
     typeof payload.fw_version === 'string'
       ? payload.fw_version
@@ -180,6 +208,8 @@ export function verifyHandshake(
     touchRoute: touch,
     deviceTheme,
     gestureMap,
+    hapticIntensity,
+    hapticCalibrated,
     capacity: asCapacity(payload.capacity),
     capabilities,
     nativePlugins: asStringArray(payload.native_plugins ?? payload.nativePlugins),

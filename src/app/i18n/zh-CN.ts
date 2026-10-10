@@ -195,6 +195,11 @@ export const zhCN = {
       ctrl_c: 'Ctrl + C', ctrl_v: 'Ctrl + V', ctrl_x: 'Ctrl + X', ctrl_z: 'Ctrl + Z',
       ctrl_shift_z: 'Ctrl + Shift + Z', alt_left: 'Alt + ←', alt_right: 'Alt + →'
     },
+    hapticIntensity: '触摸板震动强度',
+    hapticIntensityHint: '立即写入并持久化到下位机；0 为关闭',
+    hapticCalibrate: '马达校准',
+    hapticCalibrateButton: '校准马达',
+    hapticCalibrateHint: '校准时将震动约 0.3–1 秒，用于闭环谐振校准',
     attentionPriority: '注意力优先排序',
     attentionPriorityHint: '开启后，有新活动的会话会移动到导航列表顶部',
     terminalTheme: '终端配色',

@@ -7,8 +7,11 @@ export const DeviceInvokeChannel = {
   ReadFile: 'device:readFile',
   WriteFile: 'device:writeFile',
   TouchRoute: 'device:touchRoute',
+  PluginEnable: 'device:pluginEnable',
   DeviceTheme: 'device:deviceTheme',
   GestureMap: 'device:gestureMap',
+  HapticIntensity: 'device:hapticIntensity',
+  HapticCalibrate: 'device:hapticCalibrate',
   Capacity: 'device:capacity',
   PluginList: 'device:pluginList',
   FileList: 'device:fileList',
@@ -68,6 +71,10 @@ export interface DeviceInfo {
   touchRoute?: 'local_ui' | 'usb_touchpad'
   deviceTheme?: DeviceThemeStatus
   gestureMap?: DeviceGestureMap
+  /** 触摸板震动马达强度 0-100；0 = 关闭。仅握手上报后才存在，不要默认填 0。 */
+  hapticIntensity?: number
+  /** 马达是否已完成闭环校准（握手或校准成功后回显）。 */
+  hapticCalibrated?: boolean
   capacity?: DeviceCapacity
   lastError?: string
   capabilities?: string[]
@@ -161,12 +168,15 @@ export interface DeviceApi {
   writeFile(req: DeviceWriteFileRequest): Promise<{ generation?: number }>
   saveAndRun(req: DeviceWriteFileRequest): Promise<{ generation?: number }>
   setTouchRoute(deviceId: string, route: 'local_ui' | 'usb_touchpad'): Promise<void>
+  setPluginEnabled(deviceId: string, plugin: string, enable: boolean): Promise<void>
   setDeviceTheme(deviceId: string, theme: DeviceTheme): Promise<void>
   setGestureMap(
     deviceId: string,
     left: DeviceGestureAction,
     right: DeviceGestureAction
   ): Promise<void>
+  setHapticIntensity(deviceId: string, intensity: number): Promise<void>
+  calibrateHaptic(deviceId: string): Promise<void>
   onChanged(cb: (devices: DeviceInfo[]) => void): () => void
   onLog(cb: (event: DeviceLogEvent) => void): () => void
   onProgress(cb: (event: DeviceProgressEvent) => void): () => void

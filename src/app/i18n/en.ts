@@ -193,6 +193,11 @@ export const en = {
       ctrl_c: 'Ctrl + C', ctrl_v: 'Ctrl + V', ctrl_x: 'Ctrl + X', ctrl_z: 'Ctrl + Z',
       ctrl_shift_z: 'Ctrl + Shift + Z', alt_left: 'Alt + ←', alt_right: 'Alt + →'
     },
+    hapticIntensity: 'Touchpad haptic intensity',
+    hapticIntensityHint: 'Written to the device immediately and persisted; 0 disables vibration',
+    hapticCalibrate: 'Motor calibration',
+    hapticCalibrateButton: 'Calibrate motor',
+    hapticCalibrateHint: 'Vibrates for ~0.3–1s during closed-loop resonance calibration',
     attentionPriority: 'Attention-first sorting',
     attentionPriorityHint: 'Move sessions with new activity to the top of navigation',
     terminalTheme: 'Terminal palette',

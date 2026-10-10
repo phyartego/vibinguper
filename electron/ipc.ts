@@ -202,6 +202,11 @@ export function registerIpc(manager: PTYManager, ctx: IpcContext): void {
       ctx.deviceManager.setTouchRoute(deviceId, route)
   )
   ipcMain.handle(
+    DeviceInvokeChannel.PluginEnable,
+    (_e, deviceId: string, plugin: string, enable: boolean) =>
+      ctx.deviceManager.setPluginEnabled(deviceId, plugin, enable)
+  )
+  ipcMain.handle(
     DeviceInvokeChannel.DeviceTheme,
     (_e, deviceId: string, theme: DeviceTheme) =>
       ctx.deviceManager.setDeviceTheme(deviceId, theme)
@@ -210,6 +215,14 @@ export function registerIpc(manager: PTYManager, ctx: IpcContext): void {
     DeviceInvokeChannel.GestureMap,
     (_e, deviceId: string, left: DeviceGestureAction, right: DeviceGestureAction) =>
       ctx.deviceManager.setGestureMap(deviceId, left, right)
+  )
+  ipcMain.handle(
+    DeviceInvokeChannel.HapticIntensity,
+    (_e, deviceId: string, intensity: number) =>
+      ctx.deviceManager.setHapticIntensity(deviceId, intensity)
+  )
+  ipcMain.handle(DeviceInvokeChannel.HapticCalibrate, (_e, deviceId: string) =>
+    ctx.deviceManager.calibrateHaptic(deviceId)
   )
   ipcMain.handle(
     DeviceInvokeChannel.ReadFile,

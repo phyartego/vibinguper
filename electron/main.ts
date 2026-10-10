@@ -258,6 +258,9 @@ if (isPrimaryInstance) app.whenReady().then(async () => {
     }
   })
   bleTransport.wire(bleBroadcaster)
+  deviceManager.on('session-focus', (shortId: string) => {
+    bleBroadcaster?.handleFocus(shortId)
+  })
   await floatingController.setEnabled(prefs.floatingWindowEnabled)
   trayRef = createTray(prefs.language, trayCallbacks)
   if (prefs.globalShortcutEnabled) {
